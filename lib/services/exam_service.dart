@@ -34,14 +34,14 @@ class ExamApiService {
   }
 
   // Envia a foto da câmera para a API ler o gabarito
-// Envia a foto da câmera para a API ler o gabarito
   Future<double?> processOmrImage(Uint8List imageBytes, String token) async {
     // Converte os bytes da foto de alta resolução para Base64
     String base64Image = base64Encode(imageBytes);
 
-    // Substitua pela URL base correta do seu backend
+    // Substitua pela URL base correta do seu backend se necessário
     final response = await http.post(
-      Uri.parse('$baseUrl/exams/process-omr'),
+      Uri.parse(
+          '$baseUrl/process-omr'), // Ajustado para evitar duplicação de /exams/exams
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -66,15 +66,15 @@ class ExamApiService {
     }
   }
 
-// Método para buscar os dados do aluno ANTES de dar a nota
+  // Método para buscar os dados do aluno ANTES de dar a nota
   Future<Map<String, dynamic>> verifySheetData(
       {required String qrCodeUuid, required String token}) async {
     final response = await http.get(
-      Uri.parse('$baseUrl/exams/sheet/$qrCodeUuid/verify'),
+      Uri.parse('$baseUrl/sheet/$qrCodeUuid/verify'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
-        'ngrok-skip-browser-warning': 'true', // <-- ADICIONE ESTA LINHA AQUI
+        'ngrok-skip-browser-warning': 'true',
       },
     );
 
@@ -106,12 +106,26 @@ class ExamApiService {
     }
   }
 
-  // 3. Gerar o Lote de PDF (Retorna a lista de UUIDs para a nossa classe PdfGeneratorService)
+  // 👇 NOVA FUNÇÃO: Busca a lista de alunos de uma prova (Modo Manual)
+  Future<Map<String, dynamic>> getExamSheetsByExamId(
+      String examId, String token) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/$examId/sheets'),
+      headers: _headers(token),
+    );
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      throw Exception('Falha ao carregar lista de alunos.');
+    }
+  }
+
+  // 3. Gerar o Lote de PDF
   Future<ExamSheetResponse> generateExamSheets({
     required String examId,
     required String token,
-    List<String>?
-        specificStudentIds, // Opcional: Para gerar apenas para alunos de recuperação, por ex.
+    List<String>? specificStudentIds,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/$examId/generate-sheets'),
@@ -131,7 +145,7 @@ class ExamApiService {
     }
   }
 
-  // 4. (Futuro) Escanear via mobile e lançar nota
+  // 4. Escanear via mobile e lançar nota
   Future<void> scanAndGradeSheet({
     required String qrCodeUuid,
     required double grade,

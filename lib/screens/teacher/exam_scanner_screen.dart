@@ -1,22 +1,22 @@
 // lib/screens/teacher/exam_scanner_screen.dart
 
 import 'dart:typed_data';
+import 'package:academyhub_mobile/model/exam_model.dart'; // Import necessário para listar provas
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
 import 'package:academyhub_mobile/services/exam_service.dart';
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart'; // Necessário para o 'compute'
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
-import 'package:image/image.dart' as img; // PACOTE DE RECORTE
+import 'package:image/image.dart' as img;
 
 enum ScannerState { scanningQR, takingPhoto, processing }
 
-// 👇 Função TOP-LEVEL (Fora da classe) para rodar em Isolate e não travar o app
 Uint8List processImageCrop(Map<String, dynamic> data) {
   final bytes = data['bytes'] as Uint8List;
   final screenW = data['screenW'] as double;
@@ -25,43 +25,35 @@ Uint8List processImageCrop(Map<String, dynamic> data) {
   final boxH = data['boxH'] as double;
 
   img.Image? decodedImage = img.decodeImage(bytes);
-  if (decodedImage == null)
-    return bytes; // Se falhar, manda a original por segurança
+  if (decodedImage == null) return bytes;
 
-  // Corrige a rotação oculta que o iOS/Android salvam no EXIF da foto
   decodedImage = img.bakeOrientation(decodedImage);
 
   final imgW = decodedImage.width.toDouble();
   final imgH = decodedImage.height.toDouble();
 
-  // Calcula a escala que a tela usou para cobrir os espaços vazios (BoxFit.cover matemático)
   double scale =
       (screenW / imgW) > (screenH / imgH) ? (screenW / imgW) : (screenH / imgH);
 
   final scaledImgW = imgW * scale;
   final scaledImgH = imgH * scale;
 
-  // Calcula os espaços que vazaram para fora da tela
   final offsetX = (scaledImgW - screenW) / 2;
   final offsetY = (scaledImgH - screenH) / 2;
 
-  // Posição da máscara verde desenhada na tela
   final maskLeft = (screenW - boxW) / 2;
   final maskTop = (screenH - boxH) / 2;
 
-  // Converte a coordenada da tela para a coordenada real dos pixels da foto gigante
   final cropLeft = ((maskLeft + offsetX) / scale).toInt();
   final cropTop = ((maskTop + offsetY) / scale).toInt();
   final cropWidth = (boxW / scale).toInt();
   final cropHeight = (boxH / scale).toInt();
 
-  // Travas de segurança para o corte não ultrapassar o limite da imagem
   final finalX = cropLeft.clamp(0, decodedImage.width - 1).toInt();
   final finalY = cropTop.clamp(0, decodedImage.height - 1).toInt();
   final finalW = cropWidth.clamp(1, decodedImage.width - finalX).toInt();
   final finalH = cropHeight.clamp(1, decodedImage.height - finalY).toInt();
 
-  // Executa o recorte cirúrgico
   img.Image croppedImage = img.copyCrop(
     decodedImage,
     x: finalX,
@@ -70,7 +62,6 @@ Uint8List processImageCrop(Map<String, dynamic> data) {
     height: finalH,
   );
 
-  // Devolve a imagem em formato JPG super otimizado
   return img.encodeJpg(croppedImage, quality: 90);
 }
 
@@ -108,8 +99,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     if (_cameras != null && _cameras!.isNotEmpty) {
       _cameraController = CameraController(
         _cameras![0],
-        ResolutionPreset
-            .max, // Máxima qualidade para não perder detalhes do recorte
+        ResolutionPreset.max,
         enableAudio: false,
       );
       await _cameraController!.initialize();
@@ -224,18 +214,15 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     setState(() => _currentState = ScannerState.processing);
 
     try {
-      // 1. Dispara a foto inteira
       final XFile photo = await _cameraController!.takePicture();
       final Uint8List fullImageBytes = await photo.readAsBytes();
 
       _showLoadingDialog("Recortando imagem...");
 
-      // 2. Extrai os tamanhos da tela atual para calcular a proporção do recorte
       final screenSize = MediaQuery.of(context).size;
-      final boxW = screenSize.width * 0.90; // 90% da largura
-      final boxH = boxW * 0.55; // Altura ideal para cobrir os quadrados pretos
+      final boxW = screenSize.width * 0.90;
+      final boxH = boxW * 0.55;
 
-      // 3. Envia para a Isolate para processar no fundo sem travar o celular
       final Uint8List croppedBytes = await compute(processImageCrop, {
         'bytes': fullImageBytes,
         'screenW': screenSize.width,
@@ -249,7 +236,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-      // 4. Envia apenas a tira recortada para a API Node/Python
       double? detectedGrade =
           await ExamApiService().processOmrImage(croppedBytes, token!);
 
@@ -270,12 +256,10 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     }
   }
 
-  // --- Função responsável por tirar o achatamento da câmera ---
   Widget _buildUndistortedCameraPreview() {
     final size = MediaQuery.of(context).size;
     var scale = size.aspectRatio * _cameraController!.value.aspectRatio;
 
-    // Ajusta a escala para sempre preencher a tela, como um BoxFit.cover
     if (scale < 1) scale = 1 / scale;
 
     return ClipRect(
@@ -288,14 +272,15 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
   }
 
-  // Manteve as outras funções visuais, mas com as novas chamadas e medidas ajustadas
-  Future<void> _showGradeConfirmationModal(
+  // MODIFICADO: Aceita um 'fromManualMode' para devolver a nota em vez de reiniciar a câmera
+  Future<double?> _showGradeConfirmationModal(
       String qrCodeUuid, Map<String, dynamic> sheetData,
-      {double? autoDetectedGrade}) async {
+      {double? autoDetectedGrade, bool fromManualMode = false}) async {
     final TextEditingController gradeController = TextEditingController(
       text: autoDetectedGrade != null ? autoDetectedGrade.toString() : '',
     );
     bool isSaving = false;
+    double? finalReturnedGrade; // Variável para retornar ao modo manual
 
     final schoolName =
         Provider.of<SchoolProvider>(context, listen: false).school?.name ??
@@ -395,6 +380,17 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                             ),
                           ),
                         ),
+                      )
+                    else if (fromManualMode)
+                      Padding(
+                        padding: EdgeInsets.only(bottom: 10.h),
+                        child: Center(
+                          child: Text("Lançamento Manual",
+                              style: TextStyle(
+                                  color: Colors.grey[500],
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12.sp)),
+                        ),
                       ),
                     TextField(
                       controller: gradeController,
@@ -426,13 +422,13 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                 ? null
                                 : () async {
                                     Navigator.pop(context);
-                                    await _resetToQrMode();
+                                    if (!fromManualMode) await _resetToQrMode();
                                   },
                             style: OutlinedButton.styleFrom(
                                 padding: EdgeInsets.symmetric(vertical: 16.h),
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12.r))),
-                            child: const Text("Tentar de novo"),
+                            child: const Text("Cancelar"),
                           ),
                         ),
                         SizedBox(width: 15.w),
@@ -480,7 +476,12 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                                 backgroundColor:
                                                     _primaryThemeColor));
 
-                                        await _resetToQrMode();
+                                        if (fromManualMode) {
+                                          finalReturnedGrade =
+                                              finalGrade; // Devolve para a lista manual
+                                        } else {
+                                          await _resetToQrMode(); // Fluxo da Câmera
+                                        }
                                       }
                                     } catch (e) {
                                       ScaffoldMessenger.of(context)
@@ -503,7 +504,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                     height: 20.w,
                                     child: const CircularProgressIndicator(
                                         color: Colors.white, strokeWidth: 2))
-                                : const Text("Confirmar Nota",
+                                : const Text("Confirmar",
                                     style:
                                         TextStyle(fontWeight: FontWeight.bold)),
                           ),
@@ -518,6 +519,29 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         );
       },
     );
+
+    return finalReturnedGrade;
+  }
+
+  // --- Função para Abrir o Fluxo Manual ---
+  Future<void> _openManualEntryFlow() async {
+    await _scannerController.stop(); // Pausa a câmera
+
+    if (!mounted) return;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _ManualEntrySheet(
+        openGradeModal: _showGradeConfirmationModal,
+      ),
+    );
+
+    // Quando fechar o manual, retoma o scanner
+    if (_currentState == ScannerState.scanningQR && mounted) {
+      _scannerController.start();
+    }
   }
 
   @override
@@ -535,15 +559,16 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   _currentState == ScannerState.processing) &&
               _cameraController != null &&
               _cameraController!.value.isInitialized)
-            // Câmera Fotográfica sem achatamento
             _buildUndistortedCameraPreview()
           else
             const Center(child: CircularProgressIndicator(color: Colors.white)),
+
           if (_currentState == ScannerState.scanningQR)
             _buildQrScannerOverlay()
           else if (_currentState == ScannerState.takingPhoto ||
               _currentState == ScannerState.processing)
             _buildPhotoCaptureOverlay(),
+
           Positioned(
             top: 50.h,
             left: 20.w,
@@ -562,6 +587,25 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
               ),
             ),
           ),
+
+          // 👇 NOVO: Botão de Lançamento Manual
+          if (_currentState == ScannerState.scanningQR)
+            Positioned(
+              top: 50.h,
+              right: 20.w,
+              child: Container(
+                decoration: const BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.all(Radius.circular(20))),
+                child: TextButton.icon(
+                  icon: const Icon(PhosphorIcons.keyboard,
+                      color: Colors.white, size: 18),
+                  label: const Text("Modo Manual",
+                      style: TextStyle(color: Colors.white)),
+                  onPressed: _openManualEntryFlow,
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -629,7 +673,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   Widget _buildPhotoCaptureOverlay() {
     return LayoutBuilder(builder: (context, constraints) {
-      // Formato perfeito para enquadrar os 4 quadrados pretos
       final boxWidth = constraints.maxWidth * 0.90;
       final boxHeight = boxWidth * 0.55;
 
@@ -728,5 +771,290 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         ],
       );
     });
+  }
+}
+
+// =========================================================================
+// WIDGET EXCLUSIVO PARA O BOTTOM SHEET DO MODO MANUAL
+// =========================================================================
+class _ManualEntrySheet extends StatefulWidget {
+  final Future<double?> Function(String, Map<String, dynamic>,
+      {double? autoDetectedGrade, bool fromManualMode}) openGradeModal;
+
+  const _ManualEntrySheet({required this.openGradeModal});
+
+  @override
+  State<_ManualEntrySheet> createState() => _ManualEntrySheetState();
+}
+
+class _ManualEntrySheetState extends State<_ManualEntrySheet> {
+  bool isLoading = true;
+  List<ExamModel>? _exams;
+  ExamModel? _selectedExam;
+  List<dynamic>? _studentsList;
+  String _searchQuery = "";
+
+  final Color _primaryThemeColor = const Color(0xFFC8A2C8);
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchExams();
+  }
+
+  Future<void> _fetchExams() async {
+    try {
+      final token = Provider.of<AuthProvider>(context, listen: false).token;
+      final exams = await ExamApiService().getExams(token!);
+      setState(() {
+        _exams = exams;
+        isLoading = false;
+      });
+    } catch (e) {
+      setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _fetchStudents(ExamModel exam) async {
+    setState(() {
+      _selectedExam = exam;
+      isLoading = true;
+      _searchQuery = "";
+    });
+
+    try {
+      final token = Provider.of<AuthProvider>(context, listen: false).token;
+      final data =
+          await ExamApiService().getExamSheetsByExamId(exam.id!, token!);
+      setState(() {
+        _studentsList = data['sheets'];
+        isLoading = false;
+      });
+    } catch (e) {
+      setState(() => isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.9, // Ocupa 90% da tela
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : Colors.grey[100],
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
+      ),
+      child: Column(
+        children: [
+          // Header arrastável
+          Container(
+            padding: EdgeInsets.symmetric(vertical: 12.h),
+            child: Container(
+              width: 40.w,
+              height: 4.h,
+              decoration: BoxDecoration(
+                  color: Colors.grey[400],
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+
+          // Título e Botão Voltar (se estiver na lista de alunos)
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 10.h),
+            child: Row(
+              children: [
+                if (_selectedExam != null)
+                  IconButton(
+                    icon: Icon(PhosphorIcons.arrow_left,
+                        color: isDark ? Colors.white : Colors.black),
+                    onPressed: () => setState(() => _selectedExam = null),
+                  ),
+                Expanded(
+                  child: Text(
+                    _selectedExam == null
+                        ? "Selecione a Prova"
+                        : _selectedExam!.title,
+                    style: GoogleFonts.saira(
+                        fontSize: 20.sp,
+                        fontWeight: FontWeight.bold,
+                        color: isDark ? Colors.white : Colors.black),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          // Se estiver carregando...
+          if (isLoading)
+            Expanded(
+                child: Center(
+                    child:
+                        CircularProgressIndicator(color: _primaryThemeColor)))
+
+          // Se estiver na Lista de PROVAS
+          else if (_selectedExam == null)
+            Expanded(
+              child: ListView.builder(
+                itemCount: _exams?.length ?? 0,
+                itemBuilder: (context, index) {
+                  final exam = _exams![index];
+                  return ListTile(
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 24.w, vertical: 8.h),
+                    leading: CircleAvatar(
+                      backgroundColor: _primaryThemeColor.withOpacity(0.2),
+                      child: Icon(PhosphorIcons.file_text,
+                          color: _primaryThemeColor),
+                    ),
+                    title: Text(exam.title,
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 16.sp)),
+                    subtitle: Text(
+                        "${exam.subjectName ?? 'Disciplina'} • ${exam.className ?? 'Turma'}"), // 👇 CORREÇÃO AQUI
+                    trailing: const Icon(PhosphorIcons.caret_right),
+                    onTap: () => _fetchStudents(exam),
+                  );
+                },
+              ),
+            )
+
+          // Se estiver na Lista de ALUNOS
+          else
+            Expanded(
+              child: Column(
+                children: [
+                  // Barra de Pesquisa
+                  Padding(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 20.w, vertical: 10.h),
+                    child: TextField(
+                      onChanged: (val) =>
+                          setState(() => _searchQuery = val.toLowerCase()),
+                      decoration: InputDecoration(
+                        hintText: "Buscar aluno...",
+                        prefixIcon: const Icon(PhosphorIcons.magnifying_glass),
+                        filled: true,
+                        fillColor: isDark ? Colors.black26 : Colors.white,
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12.r),
+                            borderSide: BorderSide.none),
+                      ),
+                    ),
+                  ),
+
+                  // Lista de Alunos Filtrada
+                  Expanded(
+                    child: Builder(builder: (context) {
+                      // Filtra por nome e agrupa (Pendentes primeiro, Avaliados depois)
+                      var filtered = _studentsList?.where((s) {
+                            return s['studentName']
+                                .toString()
+                                .toLowerCase()
+                                .contains(_searchQuery);
+                          }).toList() ??
+                          [];
+
+                      filtered.sort((a, b) {
+                        if (a['status'] == 'SCANNED' &&
+                            b['status'] != 'SCANNED') return 1;
+                        if (a['status'] != 'SCANNED' &&
+                            b['status'] == 'SCANNED') return -1;
+                        return 0; // Mantém a ordem alfabética se tiverem o mesmo status
+                      });
+
+                      if (filtered.isEmpty) {
+                        return Center(
+                            child: Text("Nenhum aluno encontrado.",
+                                style: TextStyle(color: Colors.grey)));
+                      }
+
+                      return ListView.builder(
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final student = filtered[index];
+                          final isScanned = student['status'] == 'SCANNED';
+
+                          return ListTile(
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 24.w, vertical: 4.h),
+                            title: Text(student['studentName'],
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14.sp)),
+                            subtitle: Text(
+                                "Matrícula: ${student['registration'] ?? 'N/A'}"),
+                            trailing: isScanned
+                                ? Container(
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: 12.w, vertical: 6.h),
+                                    decoration: BoxDecoration(
+                                        color: Colors.green.withOpacity(0.2),
+                                        borderRadius:
+                                            BorderRadius.circular(20.r)),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(student['grade'].toString(),
+                                            style: TextStyle(
+                                                color: Colors.green,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16.sp)),
+                                        SizedBox(width: 4.w),
+                                        Icon(PhosphorIcons.check_circle_fill,
+                                            color: Colors.green, size: 16.sp),
+                                      ],
+                                    ),
+                                  )
+                                : ElevatedButton(
+                                    onPressed: () async {
+                                      // Monta um dado falso de folha para o Modal de Notas aceitar
+                                      final mockSheetData = {
+                                        'studentName': student['studentName'],
+                                        'subjectName':
+                                            _selectedExam?.subjectName ??
+                                                '', // 👇 Corrigido aqui
+                                        'className': _selectedExam?.className ??
+                                            '', // 👇 Corrigido aqui
+                                        'examTitle': _selectedExam?.title ?? '',
+                                      };
+
+                                      // Chama o Modal passando fromManualMode = true
+                                      final finalGrade =
+                                          await widget.openGradeModal(
+                                              student['qrCodeUuid'],
+                                              mockSheetData,
+                                              fromManualMode: true);
+
+                                      // Se a nota foi salva, atualiza a lista em tempo real!
+                                      if (finalGrade != null) {
+                                        setState(() {
+                                          student['status'] = 'SCANNED';
+                                          student['grade'] = finalGrade;
+                                        });
+                                      }
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: _primaryThemeColor,
+                                      foregroundColor: Colors.white,
+                                      shape: RoundedRectangleBorder(
+                                          borderRadius:
+                                              BorderRadius.circular(8.r)),
+                                    ),
+                                    child: const Text("Lançar Nota"),
+                                  ),
+                          );
+                        },
+                      );
+                    }),
+                  )
+                ],
+              ),
+            )
+        ],
+      ),
+    );
   }
 }
