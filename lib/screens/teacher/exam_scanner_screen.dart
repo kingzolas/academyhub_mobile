@@ -5,14 +5,74 @@ import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
 import 'package:academyhub_mobile/services/exam_service.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart'; // Necessário para o 'compute'
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
+import 'package:image/image.dart' as img; // PACOTE DE RECORTE
 
 enum ScannerState { scanningQR, takingPhoto, processing }
+
+// 👇 Função TOP-LEVEL (Fora da classe) para rodar em Isolate e não travar o app
+Uint8List processImageCrop(Map<String, dynamic> data) {
+  final bytes = data['bytes'] as Uint8List;
+  final screenW = data['screenW'] as double;
+  final screenH = data['screenH'] as double;
+  final boxW = data['boxW'] as double;
+  final boxH = data['boxH'] as double;
+
+  img.Image? decodedImage = img.decodeImage(bytes);
+  if (decodedImage == null)
+    return bytes; // Se falhar, manda a original por segurança
+
+  // Corrige a rotação oculta que o iOS/Android salvam no EXIF da foto
+  decodedImage = img.bakeOrientation(decodedImage);
+
+  final imgW = decodedImage.width.toDouble();
+  final imgH = decodedImage.height.toDouble();
+
+  // Calcula a escala que a tela usou para cobrir os espaços vazios (BoxFit.cover matemático)
+  double scale =
+      (screenW / imgW) > (screenH / imgH) ? (screenW / imgW) : (screenH / imgH);
+
+  final scaledImgW = imgW * scale;
+  final scaledImgH = imgH * scale;
+
+  // Calcula os espaços que vazaram para fora da tela
+  final offsetX = (scaledImgW - screenW) / 2;
+  final offsetY = (scaledImgH - screenH) / 2;
+
+  // Posição da máscara verde desenhada na tela
+  final maskLeft = (screenW - boxW) / 2;
+  final maskTop = (screenH - boxH) / 2;
+
+  // Converte a coordenada da tela para a coordenada real dos pixels da foto gigante
+  final cropLeft = ((maskLeft + offsetX) / scale).toInt();
+  final cropTop = ((maskTop + offsetY) / scale).toInt();
+  final cropWidth = (boxW / scale).toInt();
+  final cropHeight = (boxH / scale).toInt();
+
+  // Travas de segurança para o corte não ultrapassar o limite da imagem
+  final finalX = cropLeft.clamp(0, decodedImage.width - 1).toInt();
+  final finalY = cropTop.clamp(0, decodedImage.height - 1).toInt();
+  final finalW = cropWidth.clamp(1, decodedImage.width - finalX).toInt();
+  final finalH = cropHeight.clamp(1, decodedImage.height - finalY).toInt();
+
+  // Executa o recorte cirúrgico
+  img.Image croppedImage = img.copyCrop(
+    decodedImage,
+    x: finalX,
+    y: finalY,
+    width: finalW,
+    height: finalH,
+  );
+
+  // Devolve a imagem em formato JPG super otimizado
+  return img.encodeJpg(croppedImage, quality: 90);
+}
 
 class ExamScannerScreen extends StatefulWidget {
   const ExamScannerScreen({super.key});
@@ -41,27 +101,24 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   @override
   void initState() {
     super.initState();
-    // 👇 REMOVIDO: Não inicializamos mais a câmera fotográfica aqui!
-    // Deixamos o mobile_scanner reinar absoluto no início.
   }
 
-  // Função isolada para acordar a câmera apenas na hora da foto
   Future<void> _initPhotoCamera() async {
     _cameras = await availableCameras();
     if (_cameras != null && _cameras!.isNotEmpty) {
       _cameraController = CameraController(
         _cameras![0],
-        ResolutionPreset.max,
+        ResolutionPreset
+            .max, // Máxima qualidade para não perder detalhes do recorte
         enableAudio: false,
       );
       await _cameraController!.initialize();
     }
   }
 
-  // Função para limpar a câmera fotográfica e voltar pro QR
   Future<void> _resetToQrMode() async {
     setState(() => _currentState = ScannerState.processing);
-    await _cameraController?.dispose(); // Mata a câmera fotográfica
+    await _cameraController?.dispose();
     _cameraController = null;
 
     if (mounted) {
@@ -70,7 +127,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         _scannedSheetData = null;
         _currentState = ScannerState.scanningQR;
       });
-      _scannerController.start(); // Acorda o leitor de QR
+      _scannerController.start();
     }
   }
 
@@ -129,7 +186,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     setState(() => _currentState = ScannerState.processing);
 
-    // 1. Pausa o QR Code para liberar o hardware
     await _scannerController.stop();
 
     if (!mounted) return;
@@ -141,7 +197,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       final sheetData = await ExamApiService()
           .verifySheetData(qrCodeUuid: qrCodeUuid, token: token!);
 
-      // 2. Agora sim, inicializa a câmera fotográfica livre de concorrência
       setState(() => _processingStatus = "Preparando câmera...");
       await _initPhotoCamera();
 
@@ -169,15 +224,34 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     setState(() => _currentState = ScannerState.processing);
 
     try {
+      // 1. Dispara a foto inteira
       final XFile photo = await _cameraController!.takePicture();
-      final Uint8List imageBytes = await photo.readAsBytes();
+      final Uint8List fullImageBytes = await photo.readAsBytes();
 
+      _showLoadingDialog("Recortando imagem...");
+
+      // 2. Extrai os tamanhos da tela atual para calcular a proporção do recorte
+      final screenSize = MediaQuery.of(context).size;
+      final boxW = screenSize.width * 0.90; // 90% da largura
+      final boxH = boxW * 0.55; // Altura ideal para cobrir os quadrados pretos
+
+      // 3. Envia para a Isolate para processar no fundo sem travar o celular
+      final Uint8List croppedBytes = await compute(processImageCrop, {
+        'bytes': fullImageBytes,
+        'screenW': screenSize.width,
+        'screenH': screenSize.height,
+        'boxW': boxW,
+        'boxH': boxH,
+      });
+
+      _hideLoadingDialog();
       _showLoadingDialog("Analisando gabarito com IA...");
 
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
+      // 4. Envia apenas a tira recortada para a API Node/Python
       double? detectedGrade =
-          await ExamApiService().processOmrImage(imageBytes, token!);
+          await ExamApiService().processOmrImage(croppedBytes, token!);
 
       _hideLoadingDialog();
 
@@ -196,6 +270,25 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     }
   }
 
+  // --- Função responsável por tirar o achatamento da câmera ---
+  Widget _buildUndistortedCameraPreview() {
+    final size = MediaQuery.of(context).size;
+    var scale = size.aspectRatio * _cameraController!.value.aspectRatio;
+
+    // Ajusta a escala para sempre preencher a tela, como um BoxFit.cover
+    if (scale < 1) scale = 1 / scale;
+
+    return ClipRect(
+      child: Transform.scale(
+        scale: scale,
+        child: Center(
+          child: CameraPreview(_cameraController!),
+        ),
+      ),
+    );
+  }
+
+  // Manteve as outras funções visuais, mas com as novas chamadas e medidas ajustadas
   Future<void> _showGradeConfirmationModal(
       String qrCodeUuid, Map<String, dynamic> sheetData,
       {double? autoDetectedGrade}) async {
@@ -333,7 +426,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                 ? null
                                 : () async {
                                     Navigator.pop(context);
-                                    // Se clicar em Tentar de Novo, destrói e recria o fluxo
                                     await _resetToQrMode();
                                   },
                             style: OutlinedButton.styleFrom(
@@ -388,7 +480,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                                 backgroundColor:
                                                     _primaryThemeColor));
 
-                                        // Deu certo? Limpa tudo e volta pro QR Code pra ler a próxima prova!
                                         await _resetToQrMode();
                                       }
                                     } catch (e) {
@@ -444,11 +535,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   _currentState == ScannerState.processing) &&
               _cameraController != null &&
               _cameraController!.value.isInitialized)
-            SizedBox(
-              width: double.infinity,
-              height: double.infinity,
-              child: CameraPreview(_cameraController!),
-            )
+            // Câmera Fotográfica sem achatamento
+            _buildUndistortedCameraPreview()
           else
             const Center(child: CircularProgressIndicator(color: Colors.white)),
           if (_currentState == ScannerState.scanningQR)
@@ -541,8 +629,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   Widget _buildPhotoCaptureOverlay() {
     return LayoutBuilder(builder: (context, constraints) {
-      final boxWidth = constraints.maxWidth * 0.85;
-      final boxHeight = boxWidth * 0.4;
+      // Formato perfeito para enquadrar os 4 quadrados pretos
+      final boxWidth = constraints.maxWidth * 0.90;
+      final boxHeight = boxWidth * 0.55;
 
       final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
       final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
@@ -606,7 +695,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   decoration: BoxDecoration(
                       color: Colors.black87,
                       borderRadius: BorderRadius.circular(16.r)),
-                  child: Text("Enquadre o quadro de notas e fotografe",
+                  child: Text(
+                      "Encaixe os quadrados pretos dentro da linha verde",
                       style: TextStyle(color: Colors.white, fontSize: 12.sp)),
                 ),
                 SizedBox(height: 20.h),
