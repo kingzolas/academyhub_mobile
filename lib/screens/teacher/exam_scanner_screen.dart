@@ -4,7 +4,7 @@ import 'dart:typed_data';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
 import 'package:academyhub_mobile/services/exam_service.dart';
-import 'package:camera/camera.dart'; // PACOTE NOVO
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -12,7 +12,6 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 
-// Definindo os estados possíveis da tela
 enum ScannerState { scanningQR, takingPhoto, processing }
 
 class ExamScannerScreen extends StatefulWidget {
@@ -23,20 +22,17 @@ class ExamScannerScreen extends StatefulWidget {
 }
 
 class _ExamScannerScreenState extends State<ExamScannerScreen> {
-  // Controle do Scanner de QR Code
   final MobileScannerController _scannerController = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
   );
 
-  // Controle da Câmera Fotográfica (Para a parte do enquadramento)
   CameraController? _cameraController;
   List<CameraDescription>? _cameras;
 
   ScannerState _currentState = ScannerState.scanningQR;
   String _processingStatus = "";
 
-  // Dados salvos após ler o QR Code
   String? _scannedQrCodeUuid;
   Map<String, dynamic>? _scannedSheetData;
 
@@ -45,20 +41,36 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   @override
   void initState() {
     super.initState();
-    _initCamera();
+    // 👇 REMOVIDO: Não inicializamos mais a câmera fotográfica aqui!
+    // Deixamos o mobile_scanner reinar absoluto no início.
   }
 
-  // Prepara a câmera fotográfica em segundo plano
-  Future<void> _initCamera() async {
+  // Função isolada para acordar a câmera apenas na hora da foto
+  Future<void> _initPhotoCamera() async {
     _cameras = await availableCameras();
     if (_cameras != null && _cameras!.isNotEmpty) {
       _cameraController = CameraController(
         _cameras![0],
-        ResolutionPreset.max, // Qualidade máxima para a IA ler as bolinhas
+        ResolutionPreset.max,
         enableAudio: false,
       );
       await _cameraController!.initialize();
-      // Oculta a câmera do Flutter enquanto estamos no modo MobileScanner
+    }
+  }
+
+  // Função para limpar a câmera fotográfica e voltar pro QR
+  Future<void> _resetToQrMode() async {
+    setState(() => _currentState = ScannerState.processing);
+    await _cameraController?.dispose(); // Mata a câmera fotográfica
+    _cameraController = null;
+
+    if (mounted) {
+      setState(() {
+        _scannedQrCodeUuid = null;
+        _scannedSheetData = null;
+        _currentState = ScannerState.scanningQR;
+      });
+      _scannerController.start(); // Acorda o leitor de QR
     }
   }
 
@@ -70,6 +82,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   }
 
   void _showLoadingDialog(String message) {
+    if (!mounted) return;
     setState(() => _processingStatus = message);
     showDialog(
       context: context,
@@ -105,7 +118,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     if (mounted) Navigator.pop(context);
   }
 
-  // Passo 1: O Scanner leu o QR Code
   void _onDetect(BarcodeCapture capture) async {
     if (_currentState != ScannerState.scanningQR) return;
 
@@ -117,6 +129,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     setState(() => _currentState = ScannerState.processing);
 
+    // 1. Pausa o QR Code para liberar o hardware
     await _scannerController.stop();
 
     if (!mounted) return;
@@ -124,12 +137,16 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     try {
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-      _showLoadingDialog("Buscando dados do aluno...");
+      _showLoadingDialog("Buscando dados...");
       final sheetData = await ExamApiService()
           .verifySheetData(qrCodeUuid: qrCodeUuid, token: token!);
+
+      // 2. Agora sim, inicializa a câmera fotográfica livre de concorrência
+      setState(() => _processingStatus = "Preparando câmera...");
+      await _initPhotoCamera();
+
       _hideLoadingDialog();
 
-      // Muda a tela: Sai o MobileScanner, entra a Câmera Fotográfica com Máscara
       setState(() {
         _scannedQrCodeUuid = qrCodeUuid;
         _scannedSheetData = sheetData;
@@ -140,13 +157,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
-        setState(() => _currentState = ScannerState.scanningQR);
-        _scannerController.start();
+        await _resetToQrMode();
       }
     }
   }
 
-  // Passo 2: O Professor toca no botão para tirar a foto enquadrada
   Future<void> _takePhotoAndSendToAI() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized)
       return;
@@ -154,7 +169,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     setState(() => _currentState = ScannerState.processing);
 
     try {
-      // Tira a foto
       final XFile photo = await _cameraController!.takePicture();
       final Uint8List imageBytes = await photo.readAsBytes();
 
@@ -162,7 +176,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-      // Envia os bytes reais para a API (que enviará para o Python)
       double? detectedGrade =
           await ExamApiService().processOmrImage(imageBytes, token!);
 
@@ -183,7 +196,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     }
   }
 
-  // Modal final de Confirmação (Mantido como você já fez)
   Future<void> _showGradeConfirmationModal(
       String qrCodeUuid, Map<String, dynamic> sheetData,
       {double? autoDetectedGrade}) async {
@@ -319,11 +331,10 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                           child: OutlinedButton(
                             onPressed: isSaving
                                 ? null
-                                : () {
+                                : () async {
                                     Navigator.pop(context);
-                                    // Se o usuário cancelar, volta para tentar tirar a foto de novo
-                                    setState(() => _currentState =
-                                        ScannerState.takingPhoto);
+                                    // Se clicar em Tentar de Novo, destrói e recria o fluxo
+                                    await _resetToQrMode();
                                   },
                             style: OutlinedButton.styleFrom(
                                 padding: EdgeInsets.symmetric(vertical: 16.h),
@@ -369,7 +380,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                       );
 
                                       if (mounted) {
-                                        Navigator.pop(context); // Fecha o modal
+                                        Navigator.pop(context);
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(SnackBar(
                                                 content: Text(
@@ -377,14 +388,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                                 backgroundColor:
                                                     _primaryThemeColor));
 
-                                        // Reinicia o fluxo do zero para a próxima prova!
-                                        setState(() {
-                                          _currentState =
-                                              ScannerState.scanningQR;
-                                          _scannedQrCodeUuid = null;
-                                          _scannedSheetData = null;
-                                        });
-                                        _scannerController.start();
+                                        // Deu certo? Limpa tudo e volta pro QR Code pra ler a próxima prova!
+                                        await _resetToQrMode();
                                       }
                                     } catch (e) {
                                       ScaffoldMessenger.of(context)
@@ -430,7 +435,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // 1º CAMADA: Exibe a Câmera Correta dependendo do estado
           if (_currentState == ScannerState.scanningQR)
             MobileScanner(
               controller: _scannerController,
@@ -447,15 +451,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
             )
           else
             const Center(child: CircularProgressIndicator(color: Colors.white)),
-
-          // 2º CAMADA: A Máscara/Overlay por cima do vídeo
           if (_currentState == ScannerState.scanningQR)
             _buildQrScannerOverlay()
           else if (_currentState == ScannerState.takingPhoto ||
               _currentState == ScannerState.processing)
             _buildPhotoCaptureOverlay(),
-
-          // 3º CAMADA: Botão de Voltar no topo
           Positioned(
             top: 50.h,
             left: 20.w,
@@ -464,11 +464,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   color: Colors.black54, shape: BoxShape.circle),
               child: IconButton(
                 icon: const Icon(PhosphorIcons.arrow_left, color: Colors.white),
-                onPressed: () {
+                onPressed: () async {
                   if (_currentState == ScannerState.takingPhoto) {
-                    // Se desistiu de tirar foto, volta para ler QR
-                    setState(() => _currentState = ScannerState.scanningQR);
-                    _scannerController.start();
+                    await _resetToQrMode();
                   } else {
                     Navigator.pop(context);
                   }
@@ -481,7 +479,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
   }
 
-  // OVERLAY 1: O quadrado padrão para ler o QR Code
   Widget _buildQrScannerOverlay() {
     return LayoutBuilder(builder: (context, constraints) {
       final scanWindowSize = constraints.maxWidth * 0.7;
@@ -542,19 +539,16 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     });
   }
 
-  // OVERLAY 2: O Retângulo para guiar o enquadramento do gabarito das notas
   Widget _buildPhotoCaptureOverlay() {
     return LayoutBuilder(builder: (context, constraints) {
-      // Proporção exata da caixa de notas (Mais larga do que alta)
       final boxWidth = constraints.maxWidth * 0.85;
-      final boxHeight = boxWidth * 0.4; // Proporção horizontal
+      final boxHeight = boxWidth * 0.4;
 
       final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
       final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
 
       return Stack(
         children: [
-          // Tela semi-transparente fora do retângulo
           Container(
             decoration: BoxDecoration(
               border: Border(
@@ -583,7 +577,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
               ),
             ),
           ),
-          // Informação visual no topo
           Positioned(
             top: 120.h,
             left: 0,
@@ -601,7 +594,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
               ],
             ),
           ),
-          // Instrução e Botão de Captura embaixo
           Positioned(
             bottom: 80.h,
             left: 0,
