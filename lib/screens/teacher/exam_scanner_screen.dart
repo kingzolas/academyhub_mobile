@@ -4,13 +4,16 @@ import 'dart:typed_data';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
 import 'package:academyhub_mobile/services/exam_service.dart';
+import 'package:camera/camera.dart'; // PACOTE NOVO
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+
+// Definindo os estados possíveis da tela
+enum ScannerState { scanningQR, takingPhoto, processing }
 
 class ExamScannerScreen extends StatefulWidget {
   const ExamScannerScreen({super.key});
@@ -20,28 +23,52 @@ class ExamScannerScreen extends StatefulWidget {
 }
 
 class _ExamScannerScreenState extends State<ExamScannerScreen> {
-  // 👇 Retiramos o returnImage: true, pois não usaremos o frame ruim do vídeo
+  // Controle do Scanner de QR Code
   final MobileScannerController _scannerController = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
-    returnImage: false,
   );
 
-  final ImagePicker _imagePicker = ImagePicker();
+  // Controle da Câmera Fotográfica (Para a parte do enquadramento)
+  CameraController? _cameraController;
+  List<CameraDescription>? _cameras;
 
-  bool _isProcessing = false;
+  ScannerState _currentState = ScannerState.scanningQR;
   String _processingStatus = "";
 
-  // Cor principal do tema atualizada
+  // Dados salvos após ler o QR Code
+  String? _scannedQrCodeUuid;
+  Map<String, dynamic>? _scannedSheetData;
+
   final Color _primaryThemeColor = const Color(0xFFC8A2C8);
+
+  @override
+  void initState() {
+    super.initState();
+    _initCamera();
+  }
+
+  // Prepara a câmera fotográfica em segundo plano
+  Future<void> _initCamera() async {
+    _cameras = await availableCameras();
+    if (_cameras != null && _cameras!.isNotEmpty) {
+      _cameraController = CameraController(
+        _cameras![0],
+        ResolutionPreset.max, // Qualidade máxima para a IA ler as bolinhas
+        enableAudio: false,
+      );
+      await _cameraController!.initialize();
+      // Oculta a câmera do Flutter enquanto estamos no modo MobileScanner
+    }
+  }
 
   @override
   void dispose() {
     _scannerController.dispose();
+    _cameraController?.dispose();
     super.dispose();
   }
 
-  // 👇 Função auxiliar para gerenciar os modais de carregamento sem repetir código
   void _showLoadingDialog(String message) {
     setState(() => _processingStatus = message);
     showDialog(
@@ -78,8 +105,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     if (mounted) Navigator.pop(context);
   }
 
+  // Passo 1: O Scanner leu o QR Code
   void _onDetect(BarcodeCapture capture) async {
-    if (_isProcessing) return;
+    if (_currentState != ScannerState.scanningQR) return;
 
     final List<Barcode> barcodes = capture.barcodes;
     if (barcodes.isEmpty) return;
@@ -87,9 +115,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     final String? qrCodeUuid = barcodes.first.rawValue;
     if (qrCodeUuid == null || qrCodeUuid.isEmpty) return;
 
-    setState(() => _isProcessing = true);
+    setState(() => _currentState = ScannerState.processing);
 
-    // 1. Pausa o scanner imediatamente
     await _scannerController.stop();
 
     if (!mounted) return;
@@ -97,54 +124,66 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     try {
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-      // 2. Busca os dados do Aluno
       _showLoadingDialog("Buscando dados do aluno...");
       final sheetData = await ExamApiService()
           .verifySheetData(qrCodeUuid: qrCodeUuid, token: token!);
       _hideLoadingDialog();
 
-      // 3. Aciona a câmera nativa (ImagePicker) para a foto de alta qualidade
-      final XFile? photo = await _imagePicker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 100, // Garantindo a máxima qualidade para o Python
-      );
-
-      // Se o professor cancelou a câmera, aborta e reinicia o fluxo
-      if (photo == null) {
-        setState(() => _isProcessing = false);
-        _scannerController.start();
-        return;
-      }
-
-      final Uint8List imageBytes = await photo.readAsBytes();
-      double? detectedGrade;
-
-      debugPrint(
-          "📷 Foto da prova capturada! Tamanho: ${imageBytes.lengthInBytes} bytes.");
-
-      // 4. Envia a foto real e nítida para a IA
-      _showLoadingDialog("Lendo gabarito com Inteligência Artificial...");
-      detectedGrade = await ExamApiService().processOmrImage(imageBytes, token);
-      debugPrint("🧠 IA respondeu: $detectedGrade");
-      _hideLoadingDialog();
-
-      // 5. Exibe o modal de confirmação
-      if (mounted) {
-        await _showGradeConfirmationModal(qrCodeUuid, sheetData,
-            autoDetectedGrade: detectedGrade);
-      }
+      // Muda a tela: Sai o MobileScanner, entra a Câmera Fotográfica com Máscara
+      setState(() {
+        _scannedQrCodeUuid = qrCodeUuid;
+        _scannedSheetData = sheetData;
+        _currentState = ScannerState.takingPhoto;
+      });
     } catch (e) {
       _hideLoadingDialog();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
-        setState(() => _isProcessing = false);
+        setState(() => _currentState = ScannerState.scanningQR);
         _scannerController.start();
       }
     }
   }
 
+  // Passo 2: O Professor toca no botão para tirar a foto enquadrada
+  Future<void> _takePhotoAndSendToAI() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized)
+      return;
+
+    setState(() => _currentState = ScannerState.processing);
+
+    try {
+      // Tira a foto
+      final XFile photo = await _cameraController!.takePicture();
+      final Uint8List imageBytes = await photo.readAsBytes();
+
+      _showLoadingDialog("Analisando gabarito com IA...");
+
+      final token = Provider.of<AuthProvider>(context, listen: false).token;
+
+      // Envia os bytes reais para a API (que enviará para o Python)
+      double? detectedGrade =
+          await ExamApiService().processOmrImage(imageBytes, token!);
+
+      _hideLoadingDialog();
+
+      if (mounted) {
+        await _showGradeConfirmationModal(
+            _scannedQrCodeUuid!, _scannedSheetData!,
+            autoDetectedGrade: detectedGrade);
+      }
+    } catch (e) {
+      _hideLoadingDialog();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Erro na leitura: $e'), backgroundColor: Colors.red));
+        setState(() => _currentState = ScannerState.takingPhoto);
+      }
+    }
+  }
+
+  // Modal final de Confirmação (Mantido como você já fez)
   Future<void> _showGradeConfirmationModal(
       String qrCodeUuid, Map<String, dynamic> sheetData,
       {double? autoDetectedGrade}) async {
@@ -278,13 +317,19 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                       children: [
                         Expanded(
                           child: OutlinedButton(
-                            onPressed:
-                                isSaving ? null : () => Navigator.pop(context),
+                            onPressed: isSaving
+                                ? null
+                                : () {
+                                    Navigator.pop(context);
+                                    // Se o usuário cancelar, volta para tentar tirar a foto de novo
+                                    setState(() => _currentState =
+                                        ScannerState.takingPhoto);
+                                  },
                             style: OutlinedButton.styleFrom(
                                 padding: EdgeInsets.symmetric(vertical: 16.h),
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12.r))),
-                            child: const Text("Cancelar"),
+                            child: const Text("Tentar de novo"),
                           ),
                         ),
                         SizedBox(width: 15.w),
@@ -324,13 +369,22 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                       );
 
                                       if (mounted) {
-                                        Navigator.pop(context);
+                                        Navigator.pop(context); // Fecha o modal
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(SnackBar(
                                                 content: Text(
-                                                    'Nota de ${sheetData['studentName']} salva com sucesso!'),
+                                                    'Nota salva com sucesso!'),
                                                 backgroundColor:
                                                     _primaryThemeColor));
+
+                                        // Reinicia o fluxo do zero para a próxima prova!
+                                        setState(() {
+                                          _currentState =
+                                              ScannerState.scanningQR;
+                                          _scannedQrCodeUuid = null;
+                                          _scannedSheetData = null;
+                                        });
+                                        _scannerController.start();
                                       }
                                     } catch (e) {
                                       ScaffoldMessenger.of(context)
@@ -368,9 +422,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         );
       },
     );
-
-    setState(() => _isProcessing = false);
-    _scannerController.start();
   }
 
   @override
@@ -379,123 +430,220 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          MobileScanner(
-            controller: _scannerController,
-            onDetect: _onDetect,
-            errorBuilder: (context, error) {
-              return Center(
-                child: Padding(
-                  padding: EdgeInsets.all(20.w),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(PhosphorIcons.camera_slash,
-                          color: Colors.red, size: 50.sp),
-                      SizedBox(height: 15.h),
-                      Text(
-                          "Erro: ${error.errorDetails?.message ?? error.errorCode}",
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white)),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-          _buildScannerOverlay(),
+          // 1º CAMADA: Exibe a Câmera Correta dependendo do estado
+          if (_currentState == ScannerState.scanningQR)
+            MobileScanner(
+              controller: _scannerController,
+              onDetect: _onDetect,
+            )
+          else if ((_currentState == ScannerState.takingPhoto ||
+                  _currentState == ScannerState.processing) &&
+              _cameraController != null &&
+              _cameraController!.value.isInitialized)
+            SizedBox(
+              width: double.infinity,
+              height: double.infinity,
+              child: CameraPreview(_cameraController!),
+            )
+          else
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
+
+          // 2º CAMADA: A Máscara/Overlay por cima do vídeo
+          if (_currentState == ScannerState.scanningQR)
+            _buildQrScannerOverlay()
+          else if (_currentState == ScannerState.takingPhoto ||
+              _currentState == ScannerState.processing)
+            _buildPhotoCaptureOverlay(),
+
+          // 3º CAMADA: Botão de Voltar no topo
           Positioned(
             top: 50.h,
             left: 20.w,
-            right: 20.w,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  decoration: const BoxDecoration(
-                      color: Colors.black54, shape: BoxShape.circle),
-                  child: IconButton(
-                    icon: const Icon(PhosphorIcons.arrow_left,
-                        color: Colors.white),
-                    onPressed: () => Navigator.pop(context),
-                  ),
+            child: Container(
+              decoration: const BoxDecoration(
+                  color: Colors.black54, shape: BoxShape.circle),
+              child: IconButton(
+                icon: const Icon(PhosphorIcons.arrow_left, color: Colors.white),
+                onPressed: () {
+                  if (_currentState == ScannerState.takingPhoto) {
+                    // Se desistiu de tirar foto, volta para ler QR
+                    setState(() => _currentState = ScannerState.scanningQR);
+                    _scannerController.start();
+                  } else {
+                    Navigator.pop(context);
+                  }
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // OVERLAY 1: O quadrado padrão para ler o QR Code
+  Widget _buildQrScannerOverlay() {
+    return LayoutBuilder(builder: (context, constraints) {
+      final scanWindowSize = constraints.maxWidth * 0.7;
+      final horizontalPadding = (constraints.maxWidth - scanWindowSize) / 2;
+      final verticalPadding = (constraints.maxHeight - scanWindowSize) / 2;
+
+      return Stack(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                    color: Colors.black.withOpacity(0.5),
+                    width: verticalPadding),
+                bottom: BorderSide(
+                    color: Colors.black.withOpacity(0.5),
+                    width: verticalPadding),
+                left: BorderSide(
+                    color: Colors.black.withOpacity(0.5),
+                    width: horizontalPadding),
+                right: BorderSide(
+                    color: Colors.black.withOpacity(0.5),
+                    width: horizontalPadding),
+              ),
+            ),
+            child: Center(
+              child: Container(
+                height: scanWindowSize,
+                width: scanWindowSize,
+                decoration: BoxDecoration(
+                  border: Border.all(
+                      color: _primaryThemeColor.withOpacity(0.8), width: 3),
+                  borderRadius: BorderRadius.circular(16.r),
                 ),
-                Container(
-                  decoration: const BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.all(Radius.circular(20))),
-                  child: TextButton.icon(
-                    icon: const Icon(PhosphorIcons.arrows_clockwise,
-                        color: Colors.white, size: 16),
-                    label: const Text("Reiniciar Câmera",
-                        style: TextStyle(color: Colors.white)),
-                    onPressed: () {
-                      _scannerController.stop();
-                      Future.delayed(const Duration(milliseconds: 500),
-                          () => _scannerController.start());
-                    },
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
           Positioned(
             bottom: 100.h,
             left: 0,
             right: 0,
+            child: Center(
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 10.h),
+                decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(20.r)),
+                child: Text("1º Passo: Aponte para o QR Code",
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ),
+          )
+        ],
+      );
+    });
+  }
+
+  // OVERLAY 2: O Retângulo para guiar o enquadramento do gabarito das notas
+  Widget _buildPhotoCaptureOverlay() {
+    return LayoutBuilder(builder: (context, constraints) {
+      // Proporção exata da caixa de notas (Mais larga do que alta)
+      final boxWidth = constraints.maxWidth * 0.85;
+      final boxHeight = boxWidth * 0.4; // Proporção horizontal
+
+      final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
+      final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
+
+      return Stack(
+        children: [
+          // Tela semi-transparente fora do retângulo
+          Container(
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: verticalPadding),
+                bottom: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: verticalPadding),
+                left: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: horizontalPadding),
+                right: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: horizontalPadding),
+              ),
+            ),
+            child: Center(
+              child: Container(
+                height: boxHeight,
+                width: boxWidth,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.greenAccent, width: 3),
+                  borderRadius: BorderRadius.circular(8.r),
+                ),
+              ),
+            ),
+          ),
+          // Informação visual no topo
+          Positioned(
+            top: 120.h,
+            left: 0,
+            right: 0,
+            child: Column(
+              children: [
+                Text("Aluno Identificado:",
+                    style: TextStyle(color: Colors.grey[300], fontSize: 14.sp)),
+                Text(_scannedSheetData?['studentName']?.toUpperCase() ?? '',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18.sp,
+                        fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center),
+              ],
+            ),
+          ),
+          // Instrução e Botão de Captura embaixo
+          Positioned(
+            bottom: 80.h,
+            left: 0,
+            right: 0,
             child: Column(
               children: [
                 Container(
-                  margin: EdgeInsets.symmetric(horizontal: 50.w),
                   padding:
-                      EdgeInsets.symmetric(horizontal: 20.w, vertical: 10.h),
+                      EdgeInsets.symmetric(horizontal: 20.w, vertical: 8.h),
                   decoration: BoxDecoration(
                       color: Colors.black87,
-                      borderRadius: BorderRadius.circular(20.r)),
-                  child: Text("Aponte para o QR Code da prova",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
+                      borderRadius: BorderRadius.circular(16.r)),
+                  child: Text("Enquadre o quadro de notas e fotografe",
+                      style: TextStyle(color: Colors.white, fontSize: 12.sp)),
+                ),
+                SizedBox(height: 20.h),
+                GestureDetector(
+                  onTap: _takePhotoAndSendToAI,
+                  child: Container(
+                    height: 70.w,
+                    width: 70.w,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.grey[400]!, width: 4),
+                    ),
+                    child: Center(
+                      child: Container(
+                        height: 55.w,
+                        width: 55.w,
+                        decoration: const BoxDecoration(
                           color: Colors.white,
-                          fontSize: 14.sp,
-                          fontWeight: FontWeight.bold)),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),
           )
         ],
-      ),
-    );
-  }
-
-  Widget _buildScannerOverlay() {
-    return LayoutBuilder(builder: (context, constraints) {
-      final scanWindowSize = constraints.maxWidth * 0.7;
-      final horizontalPadding = (constraints.maxWidth - scanWindowSize) / 2;
-      final verticalPadding = (constraints.maxHeight - scanWindowSize) / 2;
-
-      return Container(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(
-                color: Colors.black.withOpacity(0.5), width: verticalPadding),
-            bottom: BorderSide(
-                color: Colors.black.withOpacity(0.5), width: verticalPadding),
-            left: BorderSide(
-                color: Colors.black.withOpacity(0.5), width: horizontalPadding),
-            right: BorderSide(
-                color: Colors.black.withOpacity(0.5), width: horizontalPadding),
-          ),
-        ),
-        child: Center(
-          child: Container(
-            height: scanWindowSize,
-            width: scanWindowSize,
-            decoration: BoxDecoration(
-              border: Border.all(
-                  color: _primaryThemeColor.withOpacity(0.8), width: 3),
-              borderRadius: BorderRadius.circular(16.r),
-            ),
-          ),
-        ),
       );
     });
   }
