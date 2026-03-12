@@ -1,0 +1,443 @@
+import 'dart:async';
+import 'package:academyhub_mobile/config/app_theme.dart';
+import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
+import 'package:academyhub_mobile/providers/assessment_provider.dart';
+import 'package:academyhub_mobile/providers/attendance_provider.dart';
+import 'package:academyhub_mobile/providers/auth_provider.dart';
+import 'package:academyhub_mobile/providers/class_provider.dart';
+import 'package:academyhub_mobile/providers/dashboard_provider.dart';
+import 'package:academyhub_mobile/providers/expense_provider.dart';
+import 'package:academyhub_mobile/providers/financial_automation_provider.dart';
+import 'package:academyhub_mobile/providers/invoice_provider.dart';
+
+import 'package:academyhub_mobile/providers/schedule_provider.dart';
+import 'package:academyhub_mobile/providers/school_provider.dart';
+import 'package:academyhub_mobile/providers/student_provider.dart';
+import 'package:academyhub_mobile/providers/subject_provider.dart';
+import 'package:academyhub_mobile/providers/theme_provider.dart';
+import 'package:academyhub_mobile/providers/user_provider.dart';
+import 'package:academyhub_mobile/providers/whatsapp_provider.dart';
+import 'package:academyhub_mobile/screens/negotiation.data.dart';
+import 'package:academyhub_mobile/screens/public_registration_screen.dart';
+import 'package:academyhub_mobile/screens/student/student_invoices_screen.dart';
+import 'package:academyhub_mobile/services/websocket.dart';
+import 'package:academyhub_mobile/student_access/student_exam_execution_screen.dart';
+import 'package:academyhub_mobile/student_access/student_exam_login_screen.dart';
+import 'package:academyhub_mobile/student_access/student_exam_result_screen.dart';
+
+// [ADICIONADO] Importação da tela de mensalidades/faturas do aluno
+// import 'package:academyhub_mobile/student_access/student_invoices_screen.dart';
+
+import 'package:firebase_core/firebase_core.dart';
+// [IMPORTANTE] Precisamos do foundation para usar o kIsWeb
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+
+import 'package:academyhub_mobile/dashboard.dart';
+import 'package:academyhub_mobile/screens/loginPage.dart';
+import 'package:academyhub_mobile/screens/splash_screen.dart';
+import 'package:academyhub_mobile/services/notification.service.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
+
+// [NOTA] Se você não gerou o arquivo, REMOVA a linha abaixo:
+// import 'firebase_options.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+final GlobalKey<ScaffoldMessengerState> scaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+
+void main() {
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    try {
+      // -----------------------------------------------------------
+      // [LÓGICA AJUSTADA] - Só inicializa Firebase se NÃO for Web
+      // -----------------------------------------------------------
+      if (!kIsWeb) {
+        // Se estiver no Android ou iOS, inicia normal
+        await Firebase.initializeApp();
+
+        // [COMENTADO TEMPORARIAMENTE] Aguardando confirmação do service se o FCM foi movido para dentro do init()
+        // await NotificationService.instance.initializeFCM();
+
+        // Inicia e configura notificações apenas no Mobile
+        NotificationService.instance.init(scaffoldMessengerKey);
+
+        debugPrint("🔥 [Main] Firebase inicializado (Mobile).");
+      } else {
+        debugPrint(
+            "🌐 [Main] Rodando na Web: Firebase/Notificações desativados.");
+      }
+      // -----------------------------------------------------------
+
+      // Configurações de URL e Data (Funcionam em ambos)
+      usePathUrlStrategy();
+      await initializeDateFormatting('pt_BR', null);
+
+      runApp(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => ThemeProvider()),
+            ChangeNotifierProvider(create: (_) => ExpenseProvider()),
+            ChangeNotifierProvider(create: (_) => AttendanceProvider()),
+            ChangeNotifierProvider(create: (_) => AuthProvider()),
+            ChangeNotifierProvider(create: (_) => StudentProvider()),
+            ChangeNotifierProvider(create: (_) => UserProvider()),
+            ChangeNotifierProvider(create: (_) => NegotiationProvider()),
+            ChangeNotifierProvider(create: (_) => InvoiceProvider()),
+            ChangeNotifierProvider(create: (_) => SubjectProvider()),
+            ChangeNotifierProvider(create: (_) => ClassProvider()),
+            ChangeNotifierProvider(create: (_) => WhatsappProvider()),
+            ChangeNotifierProvider(create: (_) => AssessmentProvider()),
+            ChangeNotifierProvider(create: (_) => DashboardProvider()),
+            ChangeNotifierProvider(create: (_) => SchoolProvider()),
+
+            // 👉 ADICIONE ESTA LINHA AQUI:
+            Provider<WebSocketService>(create: (_) => WebSocketService()),
+
+            ChangeNotifierProxyProvider<AuthProvider, AcademicCalendarProvider>(
+              create: (context) => AcademicCalendarProvider(
+                  Provider.of<AuthProvider>(context, listen: false)),
+              update: (context, auth, previous) =>
+                  AcademicCalendarProvider(auth),
+            ),
+            ChangeNotifierProxyProvider<AuthProvider, ScheduleProvider>(
+              create: (context) => ScheduleProvider(
+                  Provider.of<AuthProvider>(context, listen: false)),
+              update: (context, auth, previous) => ScheduleProvider(auth),
+            ),
+          ],
+          child: const MyApp(),
+        ),
+      );
+    } catch (e, stack) {
+      runApp(ErrorApp(error: e.toString(), stack: stack.toString()));
+    }
+  }, (error, stack) {
+    runApp(ErrorApp(error: error.toString(), stack: stack.toString()));
+  });
+}
+
+// ... ErrorApp continua igual ...
+class ErrorApp extends StatelessWidget {
+  final String error;
+  final String stack;
+
+  const ErrorApp({super.key, required this.error, required this.stack});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        backgroundColor: const Color(0xFFB71C1C),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline,
+                      color: Colors.white, size: 60),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "ERRO NA INICIALIZAÇÃO",
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 24),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    "O aplicativo encontrou um erro fatal antes de iniciar.",
+                    style: TextStyle(color: Colors.white70, fontSize: 16),
+                  ),
+                  const SizedBox(height: 30),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.black26,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.yellowAccent),
+                    ),
+                    child: SelectableText(
+                      error,
+                      style: const TextStyle(
+                          color: Colors.yellowAccent,
+                          fontFamily: 'Courier',
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text("Detalhes Técnicos:",
+                      style: TextStyle(color: Colors.white70)),
+                  const Divider(color: Colors.white30),
+                  SelectableText(
+                    stack,
+                    style: const TextStyle(
+                        color: Colors.white60,
+                        fontFamily: 'Courier',
+                        fontSize: 10),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final themeProvider = Provider.of<ThemeProvider>(context);
+
+    final GoRouter _router = GoRouter(
+      navigatorKey: navigatorKey,
+      initialLocation: '/',
+      errorBuilder: (context, state) => Scaffold(
+        body: Center(child: Text('Página não encontrada: ${state.error}')),
+      ),
+      routes: [
+        GoRoute(
+          path: '/matricula-web/:schoolId',
+          builder: (context, state) {
+            final schoolId = state.pathParameters['schoolId'];
+            return PublicRegistrationScreen(schoolId: schoolId!);
+          },
+        ),
+        GoRoute(
+          path: '/pagar/:token',
+          builder: (context, state) {
+            final token = state.pathParameters['token']!;
+            return NegotiationPaymentScreen(negotiationToken: token);
+          },
+        ),
+
+        // =========================================================
+        // 🌟 ROTA PARA A TELA DE MENSALIDADES (DESTINO DO MAGIC LINK)
+        // =========================================================
+        GoRoute(
+          path: '/aluno/faturas',
+          builder: (context, state) => const StudentInvoicesScreen(),
+        ),
+
+        // =========================================================
+        // 🌟 NOVA ROTA: CAPTURA DO MAGIC LINK
+        // =========================================================
+        GoRoute(
+          path: '/auth/student/access-by-token',
+          builder: (context, state) {
+            final token = state.uri.queryParameters['token'];
+
+            if (token == null || token.isEmpty) {
+              return const Scaffold(
+                body: Center(
+                    child: Text('Token de acesso não fornecido ou inválido.')),
+              );
+            }
+
+            return StudentTokenHandlerScreen(token: token);
+          },
+        ),
+        // =========================================================
+
+        GoRoute(
+          path: '/aluno/prova/:assessmentId',
+          builder: (context, state) {
+            final assessmentId = state.pathParameters['assessmentId'];
+            if (assessmentId == null) {
+              return const Scaffold(body: Center(child: Text("ID inválido")));
+            }
+            return StudentExamLoginScreen(assessmentId: assessmentId);
+          },
+          routes: [
+            GoRoute(
+              path: 'execucao',
+              builder: (context, state) {
+                final assessmentId = state.pathParameters['assessmentId']!;
+                return StudentExamExecutionScreen(assessmentId: assessmentId);
+              },
+            ),
+            GoRoute(
+              path: 'resultado',
+              builder: (context, state) {
+                final extras = state.extra as Map<String, dynamic>?;
+                if (extras == null) {
+                  return const Scaffold(
+                      body: Center(
+                          child: Text("Dados do resultado não encontrados.")));
+                }
+                return StudentExamResultScreen(
+                  assessment: extras['assessment'],
+                  attempt: extras['attempt'],
+                );
+              },
+            ),
+          ],
+        ),
+        GoRoute(
+          path: '/',
+          builder: (context, state) => const AuthWrapper(),
+        ),
+      ],
+    );
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final bool isMobile = constraints.maxWidth < 768;
+      final Size designSize =
+          isMobile ? const Size(390, 844) : const Size(1920, 1080);
+
+      return ScreenUtilInit(
+        designSize: designSize,
+        minTextAdapt: true,
+        splitScreenMode: true,
+        builder: (context, child) {
+          return MaterialApp.router(
+            routerConfig: _router,
+            scaffoldMessengerKey: scaffoldMessengerKey,
+            title: 'Academy Hub',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.lightTheme,
+            darkTheme: AppTheme.darkTheme,
+            themeMode: themeProvider.themeMode,
+            localizationsDelegates: const [
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            supportedLocales: const [
+              Locale('pt', 'BR'),
+              Locale('en', 'US'),
+            ],
+            locale: const Locale('pt', 'BR'),
+          );
+        },
+      );
+    });
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthProvider>(
+      builder: (ctx, auth, _) {
+        if (auth.isAuthenticated) {
+          return const Dashboard();
+        }
+        return FutureBuilder(
+          future: auth.tryAutoLogin(context),
+          builder: (ctx, authResultSnapshot) {
+            if (authResultSnapshot.connectionState == ConnectionState.waiting) {
+              return const SplashScreen();
+            }
+            return const Loginpage();
+          },
+        );
+      },
+    );
+  }
+}
+
+// ====================================================================
+// 🌟 TELA DE HANDLER: PROCESSA O MAGIC LINK SILENCIOSAMENTE
+// ====================================================================
+class StudentTokenHandlerScreen extends StatefulWidget {
+  final String token;
+  const StudentTokenHandlerScreen({super.key, required this.token});
+
+  @override
+  State<StudentTokenHandlerScreen> createState() =>
+      _StudentTokenHandlerScreenState();
+}
+
+class _StudentTokenHandlerScreenState extends State<StudentTokenHandlerScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _validateAndLogin();
+    });
+  }
+
+  Future<void> _validateAndLogin() async {
+    try {
+      final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+      // Chamada real para a sua API validando o token temporário
+      final bool success =
+          await authProvider.loginWithMagicLink(widget.token, context);
+
+      if (!mounted) return;
+
+      if (success) {
+        // [AJUSTADO] Direciona para a rota da tela de faturas do aluno!
+        context.go('/aluno/faturas');
+      } else {
+        _showErrorAndRedirect(
+            "Este link expirou ou é inválido. Solicite um novo acesso no WhatsApp.");
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showErrorAndRedirect(
+          "Erro ao tentar acessar. Tente novamente mais tarde.");
+    }
+  }
+
+  void _showErrorAndRedirect(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red.shade800,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    // Manda de volta pra tela de login principal
+    context.go('/');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(color: theme.primaryColor),
+            const SizedBox(height: 24),
+            Text(
+              "Autenticando acesso seguro...",
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w500,
+                color: theme.textTheme.bodyLarge?.color,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              "Você será redirecionado para suas faturas em instantes.",
+              style: TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

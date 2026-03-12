@@ -1,0 +1,57 @@
+workflows:
+  ios-unsigned:
+    name: iOS Build (Sem Assinatura)
+    instance_type: mac_mini_m1
+    max_build_duration: 60
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Baixar dependencias
+        script: |
+          flutter pub get
+      
+      - name: Instalar Pods e Configurar iOS 15
+        script: |
+          cd ios
+          # Se o Podfile não existir, cria um básico
+          if [ ! -f Podfile ]; then
+            flutter create .
+          fi
+          
+          # FORÇA A VERSÃO MÍNIMA PARA 15.0 NO PODFILE
+          # Tenta substituir a linha existente
+          sed -i '' "s/^platform :ios.*/platform :ios, '15.0'/" Podfile || sed -i "s/^platform :ios.*/platform :ios, '15.0'/" Podfile
+          
+          # Se a linha não existia, adiciona no topo
+          if ! grep -q "platform :ios, '15.0'" Podfile; then
+             echo "platform :ios, '15.0'" | cat - Podfile > temp && mv temp Podfile
+          fi
+
+          # Instala as dependências
+          pod install --repo-update
+          cd ..
+
+      - name: Build iOS .app (Sem Assinatura)
+        script: |
+          # Compila o app sem pedir certificado da Apple
+          flutter build ios --release --no-codesign
+
+      - name: Injetar Firebase e Gerar .ipa
+        script: |
+          # Entra na pasta onde o app foi compilado
+          cd build/ios/iphoneos
+          
+          # --- [CORREÇÃO CRÍTICA PARA TELA BRANCA] ---
+          # Copia o arquivo da pasta do projeto para DENTRO do app compilado
+          # Isso garante que o Firebase ache as credenciais mesmo sem registro no Xcode
+          echo "Injetando GoogleService-Info.plist..."
+          cp ../../../ios/Runner/GoogleService-Info.plist Runner.app/GoogleService-Info.plist
+          
+          # Cria a estrutura do IPA para o AltStore
+          mkdir Payload
+          mv Runner.app Payload
+          zip -r academyhub.ipa Payload
+    artifacts:
+      - build/ios/iphoneos/*.ipa
