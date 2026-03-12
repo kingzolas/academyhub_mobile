@@ -45,5 +45,10 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+    <string>O Academy Hub precisa acessar a câmera para ler o QR Code da prova e capturar a foto do gabarito para correção.</string>
+
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>O Academy Hub precisa de acesso à galeria de fotos caso você queira fazer o upload de um gabarito já salvo.</string>
 </dict>
 </plist>
