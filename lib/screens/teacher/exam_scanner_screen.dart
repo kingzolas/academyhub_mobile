@@ -1,7 +1,7 @@
 // lib/screens/teacher/exam_scanner_screen.dart
 
 import 'dart:typed_data';
-import 'package:academyhub_mobile/model/exam_model.dart'; // Import necessário para listar provas
+import 'package:academyhub_mobile/model/exam_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
 import 'package:academyhub_mobile/services/exam_service.dart';
@@ -73,9 +73,11 @@ class ExamScannerScreen extends StatefulWidget {
 }
 
 class _ExamScannerScreenState extends State<ExamScannerScreen> {
+  // 👇 FIX APLICADO: autoStart definido como false para evitar a tela vermelha
   final MobileScannerController _scannerController = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
+    autoStart: false,
   );
 
   CameraController? _cameraController;
@@ -92,6 +94,17 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   @override
   void initState() {
     super.initState();
+    // Inicia a câmera manualmente assim que a tela abre
+    _startScannerSafely();
+  }
+
+  // Função blindada contra dupla inicialização (Race Condition)
+  Future<void> _startScannerSafely() async {
+    try {
+      await _scannerController.start();
+    } catch (e) {
+      debugPrint("Erro ao iniciar o scanner de QR: $e");
+    }
   }
 
   Future<void> _initPhotoCamera() async {
@@ -117,7 +130,10 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         _scannedSheetData = null;
         _currentState = ScannerState.scanningQR;
       });
-      _scannerController.start();
+      // Dá um fôlego para o Flutter remontar a tela antes de religar a lente
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startScannerSafely();
+      });
     }
   }
 
@@ -200,6 +216,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     } catch (e) {
       _hideLoadingDialog();
       if (mounted) {
+        // Se a API falhar (ex: QR Code inválido), mostra o erro e volta a ler QR
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
         await _resetToQrMode();
@@ -272,7 +289,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
   }
 
-  // MODIFICADO: Aceita um 'fromManualMode' para devolver a nota em vez de reiniciar a câmera
   Future<double?> _showGradeConfirmationModal(
       String qrCodeUuid, Map<String, dynamic> sheetData,
       {double? autoDetectedGrade, bool fromManualMode = false}) async {
@@ -280,7 +296,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       text: autoDetectedGrade != null ? autoDetectedGrade.toString() : '',
     );
     bool isSaving = false;
-    double? finalReturnedGrade; // Variável para retornar ao modo manual
+    double? finalReturnedGrade;
 
     final schoolName =
         Provider.of<SchoolProvider>(context, listen: false).school?.name ??
@@ -471,16 +487,15 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         Navigator.pop(context);
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(SnackBar(
-                                                content: Text(
+                                                content: const Text(
                                                     'Nota salva com sucesso!'),
                                                 backgroundColor:
                                                     _primaryThemeColor));
 
                                         if (fromManualMode) {
-                                          finalReturnedGrade =
-                                              finalGrade; // Devolve para a lista manual
+                                          finalReturnedGrade = finalGrade;
                                         } else {
-                                          await _resetToQrMode(); // Fluxo da Câmera
+                                          await _resetToQrMode();
                                         }
                                       }
                                     } catch (e) {
@@ -523,9 +538,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     return finalReturnedGrade;
   }
 
-  // --- Função para Abrir o Fluxo Manual ---
   Future<void> _openManualEntryFlow() async {
-    await _scannerController.stop(); // Pausa a câmera
+    await _scannerController.stop();
 
     if (!mounted) return;
 
@@ -538,9 +552,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       ),
     );
 
-    // Quando fechar o manual, retoma o scanner
     if (_currentState == ScannerState.scanningQR && mounted) {
-      _scannerController.start();
+      _startScannerSafely(); // Religa de forma segura ao fechar
     }
   }
 
@@ -562,13 +575,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
             _buildUndistortedCameraPreview()
           else
             const Center(child: CircularProgressIndicator(color: Colors.white)),
-
           if (_currentState == ScannerState.scanningQR)
             _buildQrScannerOverlay()
           else if (_currentState == ScannerState.takingPhoto ||
               _currentState == ScannerState.processing)
             _buildPhotoCaptureOverlay(),
-
           Positioned(
             top: 50.h,
             left: 20.w,
@@ -587,8 +598,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
               ),
             ),
           ),
-
-          // 👇 NOVO: Botão de Lançamento Manual
           if (_currentState == ScannerState.scanningQR)
             Positioned(
               top: 50.h,
@@ -840,14 +849,13 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Container(
-      height: MediaQuery.of(context).size.height * 0.9, // Ocupa 90% da tela
+      height: MediaQuery.of(context).size.height * 0.9,
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E1E1E) : Colors.grey[100],
         borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
       ),
       child: Column(
         children: [
-          // Header arrastável
           Container(
             padding: EdgeInsets.symmetric(vertical: 12.h),
             child: Container(
@@ -858,8 +866,6 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                   borderRadius: BorderRadius.circular(2)),
             ),
           ),
-
-          // Título e Botão Voltar (se estiver na lista de alunos)
           Padding(
             padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 10.h),
             child: Row(
@@ -886,15 +892,11 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
               ],
             ),
           ),
-
-          // Se estiver carregando...
           if (isLoading)
             Expanded(
                 child: Center(
                     child:
                         CircularProgressIndicator(color: _primaryThemeColor)))
-
-          // Se estiver na Lista de PROVAS
           else if (_selectedExam == null)
             Expanded(
               child: ListView.builder(
@@ -913,20 +915,17 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                         style: TextStyle(
                             fontWeight: FontWeight.bold, fontSize: 16.sp)),
                     subtitle: Text(
-                        "${exam.subjectName ?? 'Disciplina'} • ${exam.className ?? 'Turma'}"), // 👇 CORREÇÃO AQUI
+                        "${exam.subjectName ?? 'Disciplina'} • ${exam.className ?? 'Turma'}"),
                     trailing: const Icon(PhosphorIcons.caret_right),
                     onTap: () => _fetchStudents(exam),
                   );
                 },
               ),
             )
-
-          // Se estiver na Lista de ALUNOS
           else
             Expanded(
               child: Column(
                 children: [
-                  // Barra de Pesquisa
                   Padding(
                     padding:
                         EdgeInsets.symmetric(horizontal: 20.w, vertical: 10.h),
@@ -944,11 +943,8 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                       ),
                     ),
                   ),
-
-                  // Lista de Alunos Filtrada
                   Expanded(
                     child: Builder(builder: (context) {
-                      // Filtra por nome e agrupa (Pendentes primeiro, Avaliados depois)
                       var filtered = _studentsList?.where((s) {
                             return s['studentName']
                                 .toString()
@@ -962,7 +958,7 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                             b['status'] != 'SCANNED') return 1;
                         if (a['status'] != 'SCANNED' &&
                             b['status'] == 'SCANNED') return -1;
-                        return 0; // Mantém a ordem alfabética se tiverem o mesmo status
+                        return 0;
                       });
 
                       if (filtered.isEmpty) {
@@ -1010,25 +1006,21 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                                   )
                                 : ElevatedButton(
                                     onPressed: () async {
-                                      // Monta um dado falso de folha para o Modal de Notas aceitar
                                       final mockSheetData = {
                                         'studentName': student['studentName'],
                                         'subjectName':
-                                            _selectedExam?.subjectName ??
-                                                '', // 👇 Corrigido aqui
-                                        'className': _selectedExam?.className ??
-                                            '', // 👇 Corrigido aqui
+                                            _selectedExam?.subjectName ?? '',
+                                        'className':
+                                            _selectedExam?.className ?? '',
                                         'examTitle': _selectedExam?.title ?? '',
                                       };
 
-                                      // Chama o Modal passando fromManualMode = true
                                       final finalGrade =
                                           await widget.openGradeModal(
                                               student['qrCodeUuid'],
                                               mockSheetData,
                                               fromManualMode: true);
 
-                                      // Se a nota foi salva, atualiza a lista em tempo real!
                                       if (finalGrade != null) {
                                         setState(() {
                                           student['status'] = 'SCANNED';
