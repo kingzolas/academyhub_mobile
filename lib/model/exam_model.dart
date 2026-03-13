@@ -26,6 +26,10 @@ class ExamQuestion {
   String text;
   ExamImage? image;
   List<String>? options;
+
+  // 👇 [NOVO] Adicionado o gabarito da questão
+  String? correctAnswer;
+
   int linesToLeave;
   double weight;
 
@@ -34,6 +38,7 @@ class ExamQuestion {
     required this.text,
     this.image,
     this.options,
+    this.correctAnswer, // Inicializa a variável
     this.linesToLeave = 5,
     this.weight = 1.0,
   });
@@ -45,6 +50,10 @@ class ExamQuestion {
       image: json['image'] != null ? ExamImage.fromJson(json['image']) : null,
       options:
           json['options'] != null ? List<String>.from(json['options']) : [],
+
+      // 👇 Lê o gabarito vindo da API
+      correctAnswer: json['correctAnswer'],
+
       linesToLeave: json['linesToLeave'] ?? 5,
       weight: (json['weight'] ?? 1.0).toDouble(),
     );
@@ -56,6 +65,10 @@ class ExamQuestion {
       'text': text,
       'image': image?.toJson(),
       'options': options,
+
+      // 👇 Envia o gabarito preenchido pelo professor para a API
+      'correctAnswer': correctAnswer,
+
       'linesToLeave': linesToLeave,
       'weight': weight,
     };
@@ -66,29 +79,33 @@ class ExamModel {
   String? id;
   String classId;
   String subjectId;
-
-  String teacherId; // <--- CORRIGIDO: Agora é teacherId
+  String teacherId;
 
   String title;
   DateTime applicationDate;
   double totalValue;
+
+  // 👇 [NOVO] Identifica se a prova usará Cartão Resposta ou Lançamento Direto
+  String correctionType;
+
   List<ExamQuestion> questions;
   String status;
 
   // Campos preenchidos quando fazemos GET (populate do mongoose)
   String? className;
   String? subjectName;
-
-  String? teacherName; // <--- CORRIGIDO
+  String? teacherName;
 
   ExamModel({
     this.id,
     required this.classId,
     required this.subjectId,
-    required this.teacherId, // <--- OBRIGATÓRIO AGORA
+    required this.teacherId,
     required this.title,
     required this.applicationDate,
     required this.totalValue,
+    this.correctionType =
+        'DIRECT_GRADE', // Padrão é o lançamento direto para evitar quebrar código antigo
     required this.questions,
     this.status = 'DRAFT',
     this.className,
@@ -111,15 +128,16 @@ class ExamModel {
       id: json['_id'],
       classId: extractId(json['class_id']),
       subjectId: extractId(json['subject_id']),
-
-      teacherId:
-          extractId(json['teacher_id']), // <--- LÊ DO BACKEND COMO teacher_id
-
+      teacherId: extractId(json['teacher_id']),
       title: json['title'] ?? '',
       applicationDate: json['applicationDate'] != null
           ? DateTime.parse(json['applicationDate'])
           : DateTime.now(),
       totalValue: (json['totalValue'] ?? 0).toDouble(),
+
+      // 👇 Lê o tipo de correção da API
+      correctionType: json['correctionType'] ?? 'DIRECT_GRADE',
+
       status: json['status'] ?? 'DRAFT',
       questions: json['questions'] != null
           ? (json['questions'] as List)
@@ -128,8 +146,7 @@ class ExamModel {
           : [],
       className: extractName(json['class_id']),
       subjectName: extractName(json['subject_id']),
-
-      teacherName: extractName(json['teacher_id']), // <--- NOME DO PROFESSOR
+      teacherName: extractName(json['teacher_id']),
     );
   }
 
@@ -137,12 +154,14 @@ class ExamModel {
     return {
       'class_id': classId,
       'subject_id': subjectId,
-
-      'teacher_id': teacherId, // <--- ENVIA PARA A API COMO teacher_id
-
+      'teacher_id': teacherId,
       'title': title,
       'applicationDate': applicationDate.toIso8601String(),
       'totalValue': totalValue,
+
+      // 👇 Envia o tipo de correção para a API
+      'correctionType': correctionType,
+
       'questions': questions.map((q) => q.toJson()).toList(),
       'status': status,
     };

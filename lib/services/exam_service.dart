@@ -33,21 +33,63 @@ class ExamApiService {
     }
   }
 
+  // 👇 NOVO: Atualizar Prova (Se não estiver bloqueada)
+  Future<ExamModel> updateExam(ExamModel exam, String token) async {
+    if (exam.id == null)
+      throw Exception("ID da prova não encontrado para atualização.");
+
+    final response = await http.put(
+      Uri.parse('$baseUrl/${exam.id}'),
+      headers: _headers(token),
+      body: jsonEncode(exam.toJson()),
+    );
+
+    if (response.statusCode == 200) {
+      return ExamModel.fromJson(jsonDecode(response.body));
+    } else if (response.statusCode == 403) {
+      throw Exception(
+          "Esta prova já foi impressa/corrigida e não pode ser alterada.");
+    } else {
+      final error =
+          jsonDecode(response.body)['message'] ?? 'Erro ao atualizar prova';
+      throw Exception(error);
+    }
+  }
+
+  // 👇 NOVO: Duplicar Prova
+  Future<ExamModel> duplicateExam(String examId, String token) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/$examId/duplicate'),
+      headers: _headers(token),
+    );
+
+    if (response.statusCode == 201) {
+      return ExamModel.fromJson(jsonDecode(response.body));
+    } else {
+      final error =
+          jsonDecode(response.body)['message'] ?? 'Erro ao duplicar prova';
+      throw Exception(error);
+    }
+  }
+
   // Envia a foto da câmera para a API ler o gabarito
-  Future<double?> processOmrImage(Uint8List imageBytes, String token) async {
-    // Converte os bytes da foto de alta resolução para Base64
+  Future<double?> processOmrImage({
+    required Uint8List imageBytes,
+    required String token,
+    required String correctionType, // 👇 Agora passamos para a API
+  }) async {
     String base64Image = base64Encode(imageBytes);
 
-    // Substitua pela URL base correta do seu backend se necessário
     final response = await http.post(
-      Uri.parse(
-          '$baseUrl/process-omr'), // Ajustado para evitar duplicação de /exams/exams
+      Uri.parse('$baseUrl/process-omr'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
       },
       body: jsonEncode({
         'imageBase64': base64Image,
+        'correctionType':
+            correctionType // O servidor vai pegar essa string e avisar o Python
       }),
     );
 
@@ -106,7 +148,7 @@ class ExamApiService {
     }
   }
 
-  // 👇 NOVA FUNÇÃO: Busca a lista de alunos de uma prova (Modo Manual)
+  // Busca a lista de alunos de uma prova (Modo Manual)
   Future<Map<String, dynamic>> getExamSheetsByExamId(
       String examId, String token) async {
     final response = await http.get(
@@ -145,10 +187,13 @@ class ExamApiService {
     }
   }
 
-  // 4. Escanear via mobile e lançar nota
+  // ATUALIZADO: Agora suporta enviar gabarito e notas divididas
   Future<void> scanAndGradeSheet({
     required String qrCodeUuid,
     required double grade,
+    double? objectiveGrade,
+    double? dissertativeGrade,
+    List<Map<String, dynamic>>? answers,
     required String token,
   }) async {
     final response = await http.post(
@@ -157,6 +202,9 @@ class ExamApiService {
       body: jsonEncode({
         'qrCodeUuid': qrCodeUuid,
         'grade': grade,
+        if (objectiveGrade != null) 'objectiveGrade': objectiveGrade,
+        if (dissertativeGrade != null) 'dissertativeGrade': dissertativeGrade,
+        if (answers != null && answers.isNotEmpty) 'answers': answers,
       }),
     );
 

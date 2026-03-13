@@ -73,7 +73,6 @@ class ExamScannerScreen extends StatefulWidget {
 }
 
 class _ExamScannerScreenState extends State<ExamScannerScreen> {
-  // 👇 FIX APLICADO: autoStart definido como false para evitar a tela vermelha
   final MobileScannerController _scannerController = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
@@ -94,11 +93,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   @override
   void initState() {
     super.initState();
-    // Inicia a câmera manualmente assim que a tela abre
     _startScannerSafely();
   }
 
-  // Função blindada contra dupla inicialização (Race Condition)
   Future<void> _startScannerSafely() async {
     try {
       await _scannerController.start();
@@ -130,7 +127,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         _scannedSheetData = null;
         _currentState = ScannerState.scanningQR;
       });
-      // Dá um fôlego para o Flutter remontar a tela antes de religar a lente
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _startScannerSafely();
       });
@@ -191,7 +187,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     if (qrCodeUuid == null || qrCodeUuid.isEmpty) return;
 
     setState(() => _currentState = ScannerState.processing);
-
     await _scannerController.stop();
 
     if (!mounted) return;
@@ -216,7 +211,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     } catch (e) {
       _hideLoadingDialog();
       if (mounted) {
-        // Se a API falhar (ex: QR Code inválido), mostra o erro e volta a ler QR
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
         await _resetToQrMode();
@@ -236,9 +230,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
       _showLoadingDialog("Recortando imagem...");
 
+      // 👇 Define as proporções com base no tipo de correção:
       final screenSize = MediaQuery.of(context).size;
-      final boxW = screenSize.width * 0.90;
-      final boxH = boxW * 0.55;
+      final isBubbleSheet =
+          _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
+
+      final boxW =
+          isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
+      final boxH = isBubbleSheet ? boxW * 1.15 : boxW * 0.55;
 
       final Uint8List croppedBytes = await compute(processImageCrop, {
         'bytes': fullImageBytes,
@@ -253,15 +252,20 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-      double? detectedGrade =
-          await ExamApiService().processOmrImage(croppedBytes, token!);
+      // 👇 Envia para a API passando o tipo de gabarito para orientar a IA
+      final response = await ExamApiService().processOmrImage(
+        imageBytes: croppedBytes,
+        token: token!,
+        correctionType: _scannedSheetData?['correctionType'] ?? 'DIRECT_GRADE',
+      );
 
       _hideLoadingDialog();
 
       if (mounted) {
+        // O back-end agora devolve a nota (se calculada)
         await _showGradeConfirmationModal(
             _scannedQrCodeUuid!, _scannedSheetData!,
-            autoDetectedGrade: detectedGrade);
+            autoDetectedGrade: response);
       }
     } catch (e) {
       _hideLoadingDialog();
@@ -387,7 +391,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                 Icon(PhosphorIcons.magic_wand_fill,
                                     color: _primaryThemeColor, size: 14.sp),
                                 SizedBox(width: 6.w),
-                                Text("Nota lida pela Inteligência Artificial",
+                                Text(
+                                    "Nota calculada pela Inteligência Artificial",
                                     style: TextStyle(
                                         color: _primaryThemeColor,
                                         fontWeight: FontWeight.bold,
@@ -553,7 +558,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
 
     if (_currentState == ScannerState.scanningQR && mounted) {
-      _startScannerSafely(); // Religa de forma segura ao fechar
+      _startScannerSafely();
     }
   }
 
@@ -682,8 +687,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   Widget _buildPhotoCaptureOverlay() {
     return LayoutBuilder(builder: (context, constraints) {
-      final boxWidth = constraints.maxWidth * 0.90;
-      final boxHeight = boxWidth * 0.55;
+      // 👇 Verifica o tipo de gabarito para desenhar a máscara correta
+      final isBubbleSheet =
+          _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
+
+      final boxWidth = isBubbleSheet
+          ? constraints.maxWidth * 0.85
+          : constraints.maxWidth * 0.90;
+      final boxHeight = isBubbleSheet ? boxWidth * 1.15 : boxWidth * 0.55;
 
       final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
       final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
@@ -748,7 +759,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                       color: Colors.black87,
                       borderRadius: BorderRadius.circular(16.r)),
                   child: Text(
-                      "Encaixe os quadrados pretos dentro da linha verde",
+                      "Encaixe as 4 âncoras pretas dentro da linha verde",
                       style: TextStyle(color: Colors.white, fontSize: 12.sp)),
                 ),
                 SizedBox(height: 20.h),
@@ -783,9 +794,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   }
 }
 
-// =========================================================================
-// WIDGET EXCLUSIVO PARA O BOTTOM SHEET DO MODO MANUAL
-// =========================================================================
 class _ManualEntrySheet extends StatefulWidget {
   final Future<double?> Function(String, Map<String, dynamic>,
       {double? autoDetectedGrade, bool fromManualMode}) openGradeModal;
