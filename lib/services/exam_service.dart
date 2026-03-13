@@ -72,11 +72,12 @@ class ExamApiService {
     }
   }
 
-  // Envia a foto da câmera para a API ler o gabarito
-  Future<double?> processOmrImage({
+  // 👇 ATUALIZADO: Agora retorna um Map inteiro e envia examId
+  Future<Map<String, dynamic>> processOmrImage({
     required Uint8List imageBytes,
     required String token,
-    required String correctionType, // 👇 Agora passamos para a API
+    required String correctionType,
+    String? examId,
   }) async {
     String base64Image = base64Encode(imageBytes);
 
@@ -88,19 +89,20 @@ class ExamApiService {
       },
       body: jsonEncode({
         'imageBase64': base64Image,
-        'correctionType':
-            correctionType // O servidor vai pegar essa string e avisar o Python
+        'correctionType': correctionType,
+        'examId': examId, // 👇 Envia o ID para a API calcular o gabarito
       }),
     );
 
     if (response.statusCode == 200) {
       final data = jsonDecode(response.body);
       if (data['success'] == true) {
-        // Pega a nota processada pelo Python. Usa num para evitar erros de casting entre int/double
-        return (data['grade'] as num).toDouble();
+        // Retorna o objeto inteiro em vez de tentar forçar a conversão de "grade"
+        return data;
       } else {
-        throw Exception(
-            data['message'] ?? 'Erro desconhecido ao processar a imagem na IA');
+        throw Exception(data['message'] ??
+            data['error'] ??
+            'A IA não conseguiu ler este formato.');
       }
     } else {
       throw Exception(

@@ -1,6 +1,7 @@
 // lib/screens/teacher/exam_scanner_screen.dart
 
 import 'dart:typed_data';
+
 import 'package:academyhub_mobile/model/exam_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
@@ -187,6 +188,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     if (qrCodeUuid == null || qrCodeUuid.isEmpty) return;
 
     setState(() => _currentState = ScannerState.processing);
+
     await _scannerController.stop();
 
     if (!mounted) return;
@@ -230,14 +232,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
       _showLoadingDialog("Recortando imagem...");
 
-      // 👇 Define as proporções com base no tipo de correção:
       final screenSize = MediaQuery.of(context).size;
       final isBubbleSheet =
           _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
 
+      // 👇 A MÁSCARA DINÂMICA: Retangular pro formato antigo, quadrada pro novo
       final boxW =
           isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
-      final boxH = isBubbleSheet ? boxW * 1.15 : boxW * 0.55;
+      final boxH = isBubbleSheet ? boxW * 1.30 : boxW * 0.55;
 
       final Uint8List croppedBytes = await compute(processImageCrop, {
         'bytes': fullImageBytes,
@@ -252,26 +254,41 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-      // 👇 Envia para a API passando o tipo de gabarito para orientar a IA
-      final response = await ExamApiService().processOmrImage(
+      // Chama a API com a nova estrutura que retorna Map<String, dynamic>
+      final aiResult = await ExamApiService().processOmrImage(
         imageBytes: croppedBytes,
         token: token!,
-        correctionType: _scannedSheetData?['correctionType'] ?? 'DIRECT_GRADE',
+        correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
+        examId: _scannedSheetData?[
+            'examId'], // O Node precisa disso para calcular a nota!
       );
 
       _hideLoadingDialog();
 
       if (mounted) {
-        // O back-end agora devolve a nota (se calculada)
+        // Extrai a nota com segurança para evitar o erro "type Null is not a subtype of num"
+        final rawGrade = aiResult['grade'];
+        double? detectedGrade;
+
+        if (rawGrade != null) {
+          detectedGrade = (rawGrade as num).toDouble();
+        }
+
         await _showGradeConfirmationModal(
-            _scannedQrCodeUuid!, _scannedSheetData!,
-            autoDetectedGrade: response);
+          _scannedQrCodeUuid!,
+          _scannedSheetData!,
+          autoDetectedGrade: detectedGrade,
+        );
       }
     } catch (e) {
       _hideLoadingDialog();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Erro na leitura: $e'), backgroundColor: Colors.red));
+        // Limpa a Exception da mensagem para ficar bonitinho pro usuário
+        final cleanError = e.toString().replaceAll('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(cleanError), backgroundColor: Colors.red));
+
+        // Retorna para tentar tirar foto novamente em vez de voltar pro QR Code
         setState(() => _currentState = ScannerState.takingPhoto);
       }
     }
@@ -297,7 +314,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       String qrCodeUuid, Map<String, dynamic> sheetData,
       {double? autoDetectedGrade, bool fromManualMode = false}) async {
     final TextEditingController gradeController = TextEditingController(
-      text: autoDetectedGrade != null ? autoDetectedGrade.toString() : '',
+      text:
+          autoDetectedGrade != null ? autoDetectedGrade.toStringAsFixed(1) : '',
     );
     bool isSaving = false;
     double? finalReturnedGrade;
@@ -687,14 +705,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   Widget _buildPhotoCaptureOverlay() {
     return LayoutBuilder(builder: (context, constraints) {
-      // 👇 Verifica o tipo de gabarito para desenhar a máscara correta
       final isBubbleSheet =
           _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
 
+      // 👇 DIMENSÕES DINÂMICAS: Quadrado vertical para Cartão, Retângulo horizontal para Nota.
       final boxWidth = isBubbleSheet
           ? constraints.maxWidth * 0.85
           : constraints.maxWidth * 0.90;
-      final boxHeight = isBubbleSheet ? boxWidth * 1.15 : boxWidth * 0.55;
+      final boxHeight = isBubbleSheet ? boxWidth * 1.30 : boxWidth * 0.55;
 
       final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
       final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
@@ -730,7 +748,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
             ),
           ),
           Positioned(
-            top: 120.h,
+            top: 100.h,
             left: 0,
             right: 0,
             child: Column(
@@ -747,7 +765,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
             ),
           ),
           Positioned(
-            bottom: 80.h,
+            bottom: 60.h,
             left: 0,
             right: 0,
             child: Column(
@@ -794,6 +812,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   }
 }
 
+// =========================================================================
+// WIDGET EXCLUSIVO PARA O BOTTOM SHEET DO MODO MANUAL
+// =========================================================================
 class _ManualEntrySheet extends StatefulWidget {
   final Future<double?> Function(String, Map<String, dynamic>,
       {double? autoDetectedGrade, bool fromManualMode}) openGradeModal;
@@ -970,7 +991,7 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                       });
 
                       if (filtered.isEmpty) {
-                        return Center(
+                        return const Center(
                             child: Text("Nenhum aluno encontrado.",
                                 style: TextStyle(color: Colors.grey)));
                       }
