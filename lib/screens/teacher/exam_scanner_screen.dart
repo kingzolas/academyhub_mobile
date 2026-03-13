@@ -236,10 +236,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       final isBubbleSheet =
           _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
 
-      // 👇 A MÁSCARA DINÂMICA: Retangular pro formato antigo, quadrada pro novo
+      // 👇 AJUSTE DA MÁSCARA: Reduzida a altura (de 1.30 para 1.05)
+      // Isso forma quase um quadrado perfeito para focar só na máquina de leitura
       final boxW =
           isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
-      final boxH = isBubbleSheet ? boxW * 1.30 : boxW * 0.55;
+      final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
 
       final Uint8List croppedBytes = await compute(processImageCrop, {
         'bytes': fullImageBytes,
@@ -254,41 +255,43 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
       final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-      // Chama a API com a nova estrutura que retorna Map<String, dynamic>
       final aiResult = await ExamApiService().processOmrImage(
         imageBytes: croppedBytes,
         token: token!,
         correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
-        examId: _scannedSheetData?[
-            'examId'], // O Node precisa disso para calcular a nota!
+        examId: _scannedSheetData?['examId'],
       );
 
       _hideLoadingDialog();
 
       if (mounted) {
-        // Extrai a nota com segurança para evitar o erro "type Null is not a subtype of num"
+        // Extrai a nota e os detalhes da correção com segurança
         final rawGrade = aiResult['grade'];
         double? detectedGrade;
-
         if (rawGrade != null) {
           detectedGrade = (rawGrade as num).toDouble();
+        }
+
+        List<dynamic>? details;
+        if (aiResult['correctionDetails'] != null) {
+          details = aiResult['correctionDetails'] as List<dynamic>;
         }
 
         await _showGradeConfirmationModal(
           _scannedQrCodeUuid!,
           _scannedSheetData!,
           autoDetectedGrade: detectedGrade,
+          correctionDetails:
+              details, // Passa a lista de acertos/erros pro modal
         );
       }
     } catch (e) {
       _hideLoadingDialog();
       if (mounted) {
-        // Limpa a Exception da mensagem para ficar bonitinho pro usuário
         final cleanError = e.toString().replaceAll('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(cleanError), backgroundColor: Colors.red));
 
-        // Retorna para tentar tirar foto novamente em vez de voltar pro QR Code
         setState(() => _currentState = ScannerState.takingPhoto);
       }
     }
@@ -310,9 +313,12 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
   }
 
+  // 👇 ATUALIZADO: Agora recebe os correctionDetails e mostra um painel sanfona
   Future<double?> _showGradeConfirmationModal(
       String qrCodeUuid, Map<String, dynamic> sheetData,
-      {double? autoDetectedGrade, bool fromManualMode = false}) async {
+      {double? autoDetectedGrade,
+      List<dynamic>? correctionDetails,
+      bool fromManualMode = false}) async {
     final TextEditingController gradeController = TextEditingController(
       text:
           autoDetectedGrade != null ? autoDetectedGrade.toStringAsFixed(1) : '',
@@ -345,211 +351,310 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   borderRadius:
                       BorderRadius.vertical(top: Radius.circular(24.r)),
                 ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                        child: Container(
-                            width: 40.w,
-                            height: 4.h,
-                            decoration: BoxDecoration(
-                                color: Colors.grey[300],
-                                borderRadius: BorderRadius.circular(2)))),
-                    SizedBox(height: 20.h),
-                    Row(
-                      children: [
-                        Icon(PhosphorIcons.user_focus,
-                            size: 40.sp, color: _primaryThemeColor),
-                        SizedBox(width: 15.w),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                // Transformamos em SingleChildScrollView para evitar transbordamento da tela
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                          child: Container(
+                              width: 40.w,
+                              height: 4.h,
+                              decoration: BoxDecoration(
+                                  color: Colors.grey[300],
+                                  borderRadius: BorderRadius.circular(2)))),
+                      SizedBox(height: 20.h),
+                      Row(
+                        children: [
+                          Icon(PhosphorIcons.user_focus,
+                              size: 40.sp, color: _primaryThemeColor),
+                          SizedBox(width: 15.w),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  sheetData['studentName']?.toUpperCase() ??
+                                      'ALUNO DESCONHECIDO',
+                                  style: GoogleFonts.saira(
+                                      fontSize: 20.sp,
+                                      fontWeight: FontWeight.bold,
+                                      height: 1.1),
+                                ),
+                                SizedBox(height: 4.h),
+                                Text(
+                                  "${sheetData['subjectName']} • ${sheetData['className']}",
+                                  style: TextStyle(
+                                      color: Colors.indigo,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13.sp),
+                                ),
+                                Text(
+                                  "${sheetData['examTitle']} • $schoolName",
+                                  style: TextStyle(
+                                      color: Colors.grey[600], fontSize: 12.sp),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 25.h),
+                      if (autoDetectedGrade != null)
+                        Padding(
+                          padding: EdgeInsets.only(bottom: 10.h),
+                          child: Center(
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 12.w, vertical: 6.h),
+                              decoration: BoxDecoration(
+                                  color: _primaryThemeColor.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(20.r)),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(PhosphorIcons.magic_wand_fill,
+                                      color: _primaryThemeColor, size: 14.sp),
+                                  SizedBox(width: 6.w),
+                                  Text("Nota calculada pela IA",
+                                      style: TextStyle(
+                                          color: _primaryThemeColor,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12.sp)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (fromManualMode)
+                        Padding(
+                          padding: EdgeInsets.only(bottom: 10.h),
+                          child: Center(
+                            child: Text("Lançamento Manual",
+                                style: TextStyle(
+                                    color: Colors.grey[500],
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12.sp)),
+                          ),
+                        ),
+                      TextField(
+                        controller: gradeController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        autofocus: autoDetectedGrade == null,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.inter(
+                            fontSize: 48.sp,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black),
+                        decoration: InputDecoration(
+                          hintText: "0.0",
+                          hintStyle: TextStyle(color: Colors.grey[300]),
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(16.r),
+                              borderSide: BorderSide.none),
+                          filled: true,
+                          fillColor: isDark ? Colors.black26 : Colors.grey[100],
+                          contentPadding: EdgeInsets.symmetric(vertical: 20.h),
+                        ),
+                      ),
+
+                      // 👇 EXPANSION TILE COM OS DETALHES DAS QUESTÕES
+                      if (correctionDetails != null &&
+                          correctionDetails.isNotEmpty) ...[
+                        SizedBox(height: 15.h),
+                        Theme(
+                          data: Theme.of(context)
+                              .copyWith(dividerColor: Colors.transparent),
+                          child: ExpansionTile(
+                            tilePadding: EdgeInsets.zero,
+                            title: Text("Detalhes da Correção Automática",
+                                style: TextStyle(
+                                    fontSize: 14.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: isDark
+                                        ? Colors.grey[300]
+                                        : Colors.grey[700])),
+                            iconColor: isDark ? Colors.white : Colors.black,
+                            collapsedIconColor:
+                                isDark ? Colors.grey[400] : Colors.grey[600],
                             children: [
-                              Text(
-                                sheetData['studentName']?.toUpperCase() ??
-                                    'ALUNO DESCONHECIDO',
-                                style: GoogleFonts.saira(
-                                    fontSize: 20.sp,
-                                    fontWeight: FontWeight.bold,
-                                    height: 1.1),
-                              ),
-                              SizedBox(height: 4.h),
-                              Text(
-                                "${sheetData['subjectName']} • ${sheetData['className']}",
-                                style: TextStyle(
-                                    color: Colors.indigo,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13.sp),
-                              ),
-                              Text(
-                                "${sheetData['examTitle']} • $schoolName",
-                                style: TextStyle(
-                                    color: Colors.grey[600], fontSize: 12.sp),
+                              Container(
+                                constraints: BoxConstraints(
+                                    maxHeight: 250
+                                        .h), // Limita altura para poder rolar a lista
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                      color: isDark
+                                          ? Colors.grey[800]!
+                                          : Colors.grey[300]!),
+                                  borderRadius: BorderRadius.circular(12.r),
+                                ),
+                                child: ListView.separated(
+                                  shrinkWrap: true,
+                                  itemCount: correctionDetails.length,
+                                  separatorBuilder: (_, __) => Divider(
+                                      height: 1,
+                                      color: isDark
+                                          ? Colors.grey[800]
+                                          : Colors.grey[200]),
+                                  itemBuilder: (context, index) {
+                                    final detail = correctionDetails[index];
+                                    final isCorrect =
+                                        detail['isCorrect'] == true;
+                                    final marked = detail['studentMarked'];
+                                    final correctAns = detail['correctAnswer'];
+
+                                    return ListTile(
+                                      dense: true,
+                                      leading: Icon(
+                                        isCorrect
+                                            ? PhosphorIcons.check_circle_fill
+                                            : PhosphorIcons.x_circle_fill,
+                                        color: isCorrect
+                                            ? Colors.green
+                                            : Colors.red,
+                                        size: 20.sp,
+                                      ),
+                                      title: Text(
+                                        'Questão ${detail['questionNumber']}',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: isDark
+                                                ? Colors.white
+                                                : Colors.black),
+                                      ),
+                                      subtitle: Text(
+                                        marked == null
+                                            ? 'Em branco'
+                                            : (isCorrect
+                                                ? 'Acertou (Marcou $marked)'
+                                                : 'Errou (Marcou $marked, era $correctAns)'),
+                                        style: TextStyle(
+                                            color: isCorrect
+                                                ? Colors.green
+                                                : Colors.red,
+                                            fontSize: 12.sp),
+                                      ),
+                                      trailing: Text(
+                                        '+${detail['earnedPoints']} pts',
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.grey[600]),
+                                      ),
+                                    );
+                                  },
+                                ),
                               ),
                             ],
                           ),
                         ),
                       ],
-                    ),
-                    SizedBox(height: 25.h),
-                    if (autoDetectedGrade != null)
-                      Padding(
-                        padding: EdgeInsets.only(bottom: 10.h),
-                        child: Center(
-                          child: Container(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 12.w, vertical: 6.h),
-                            decoration: BoxDecoration(
-                                color: _primaryThemeColor.withOpacity(0.15),
-                                borderRadius: BorderRadius.circular(20.r)),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(PhosphorIcons.magic_wand_fill,
-                                    color: _primaryThemeColor, size: 14.sp),
-                                SizedBox(width: 6.w),
-                                Text(
-                                    "Nota calculada pela Inteligência Artificial",
-                                    style: TextStyle(
-                                        color: _primaryThemeColor,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 12.sp)),
-                              ],
+
+                      SizedBox(height: 30.h),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: isSaving
+                                  ? null
+                                  : () async {
+                                      Navigator.pop(context);
+                                      if (!fromManualMode)
+                                        await _resetToQrMode();
+                                    },
+                              style: OutlinedButton.styleFrom(
+                                  padding: EdgeInsets.symmetric(vertical: 16.h),
+                                  shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(12.r))),
+                              child: const Text("Cancelar"),
                             ),
                           ),
-                        ),
-                      )
-                    else if (fromManualMode)
-                      Padding(
-                        padding: EdgeInsets.only(bottom: 10.h),
-                        child: Center(
-                          child: Text("Lançamento Manual",
-                              style: TextStyle(
-                                  color: Colors.grey[500],
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12.sp)),
-                        ),
-                      ),
-                    TextField(
-                      controller: gradeController,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      autofocus: autoDetectedGrade == null,
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.inter(
-                          fontSize: 48.sp,
-                          fontWeight: FontWeight.bold,
-                          color: isDark ? Colors.white : Colors.black),
-                      decoration: InputDecoration(
-                        hintText: "0.0",
-                        hintStyle: TextStyle(color: Colors.grey[300]),
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16.r),
-                            borderSide: BorderSide.none),
-                        filled: true,
-                        fillColor: isDark ? Colors.black26 : Colors.grey[100],
-                        contentPadding: EdgeInsets.symmetric(vertical: 20.h),
-                      ),
-                    ),
-                    SizedBox(height: 30.h),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: isSaving
-                                ? null
-                                : () async {
-                                    Navigator.pop(context);
-                                    if (!fromManualMode) await _resetToQrMode();
-                                  },
-                            style: OutlinedButton.styleFrom(
-                                padding: EdgeInsets.symmetric(vertical: 16.h),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12.r))),
-                            child: const Text("Cancelar"),
-                          ),
-                        ),
-                        SizedBox(width: 15.w),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: isSaving
-                                ? null
-                                : () async {
-                                    final String input = gradeController.text
-                                        .replaceAll(',', '.');
-                                    final double? finalGrade =
-                                        double.tryParse(input);
+                          SizedBox(width: 15.w),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: isSaving
+                                  ? null
+                                  : () async {
+                                      final String input = gradeController.text
+                                          .replaceAll(',', '.');
+                                      final double? finalGrade =
+                                          double.tryParse(input);
 
-                                    if (finalGrade == null ||
-                                        finalGrade < 0 ||
-                                        finalGrade > 10) {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(const SnackBar(
-                                              content: Text(
-                                                  'Digite uma nota válida entre 0 e 10.'),
-                                              backgroundColor: Colors.orange));
-                                      return;
-                                    }
+                                      if (finalGrade == null ||
+                                          finalGrade < 0 ||
+                                          finalGrade > 10) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(const SnackBar(
+                                                content: Text(
+                                                    'Digite uma nota válida entre 0 e 10.'),
+                                                backgroundColor:
+                                                    Colors.orange));
+                                        return;
+                                      }
 
-                                    setModalState(() => isSaving = true);
+                                      setModalState(() => isSaving = true);
 
-                                    try {
-                                      final token = Provider.of<AuthProvider>(
-                                              context,
-                                              listen: false)
-                                          .token;
+                                      try {
+                                        final token = Provider.of<AuthProvider>(
+                                                context,
+                                                listen: false)
+                                            .token;
 
-                                      await ExamApiService().scanAndGradeSheet(
-                                        qrCodeUuid: qrCodeUuid,
-                                        grade: finalGrade,
-                                        token: token!,
-                                      );
+                                        await ExamApiService()
+                                            .scanAndGradeSheet(
+                                          qrCodeUuid: qrCodeUuid,
+                                          grade: finalGrade,
+                                          token: token!,
+                                        );
 
-                                      if (mounted) {
-                                        Navigator.pop(context);
+                                        if (mounted) {
+                                          Navigator.pop(context);
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(SnackBar(
+                                                  content: const Text(
+                                                      'Nota salva com sucesso!'),
+                                                  backgroundColor:
+                                                      _primaryThemeColor));
+
+                                          if (fromManualMode) {
+                                            finalReturnedGrade = finalGrade;
+                                          } else {
+                                            await _resetToQrMode();
+                                          }
+                                        }
+                                      } catch (e) {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(SnackBar(
-                                                content: const Text(
-                                                    'Nota salva com sucesso!'),
-                                                backgroundColor:
-                                                    _primaryThemeColor));
-
-                                        if (fromManualMode) {
-                                          finalReturnedGrade = finalGrade;
-                                        } else {
-                                          await _resetToQrMode();
-                                        }
+                                                content: Text('Erro: $e'),
+                                                backgroundColor: Colors.red));
+                                        setModalState(() => isSaving = false);
                                       }
-                                    } catch (e) {
-                                      ScaffoldMessenger.of(context)
-                                          .showSnackBar(SnackBar(
-                                              content: Text('Erro: $e'),
-                                              backgroundColor: Colors.red));
-                                      setModalState(() => isSaving = false);
-                                    }
-                                  },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.black,
-                              foregroundColor: Colors.white,
-                              padding: EdgeInsets.symmetric(vertical: 16.h),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12.r)),
+                                    },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.black,
+                                foregroundColor: Colors.white,
+                                padding: EdgeInsets.symmetric(vertical: 16.h),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12.r)),
+                              ),
+                              child: isSaving
+                                  ? SizedBox(
+                                      width: 20.w,
+                                      height: 20.w,
+                                      child: const CircularProgressIndicator(
+                                          color: Colors.white, strokeWidth: 2))
+                                  : const Text("Confirmar",
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold)),
                             ),
-                            child: isSaving
-                                ? SizedBox(
-                                    width: 20.w,
-                                    height: 20.w,
-                                    child: const CircularProgressIndicator(
-                                        color: Colors.white, strokeWidth: 2))
-                                : const Text("Confirmar",
-                                    style:
-                                        TextStyle(fontWeight: FontWeight.bold)),
                           ),
-                        ),
-                      ],
-                    )
-                  ],
+                        ],
+                      )
+                    ],
+                  ),
                 ),
               ),
             );
@@ -708,11 +813,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       final isBubbleSheet =
           _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
 
-      // 👇 DIMENSÕES DINÂMICAS: Quadrado vertical para Cartão, Retângulo horizontal para Nota.
+      // 👇 DIMENSÕES DINÂMICAS: Mais "quadrado" pro cartão novo
       final boxWidth = isBubbleSheet
           ? constraints.maxWidth * 0.85
           : constraints.maxWidth * 0.90;
-      final boxHeight = isBubbleSheet ? boxWidth * 1.30 : boxWidth * 0.55;
+      final boxHeight = isBubbleSheet ? boxWidth * 1.05 : boxWidth * 0.55;
 
       final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
       final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
@@ -817,7 +922,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 // =========================================================================
 class _ManualEntrySheet extends StatefulWidget {
   final Future<double?> Function(String, Map<String, dynamic>,
-      {double? autoDetectedGrade, bool fromManualMode}) openGradeModal;
+      {double? autoDetectedGrade,
+      List<dynamic>? correctionDetails,
+      bool fromManualMode}) openGradeModal;
 
   const _ManualEntrySheet({required this.openGradeModal});
 
