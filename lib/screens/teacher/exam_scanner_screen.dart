@@ -12,9 +12,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image/image.dart' as img;
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
-import 'package:image/image.dart' as img;
 
 enum ScannerState { scanningQR, takingPhoto, processing }
 
@@ -80,6 +81,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     autoStart: false,
   );
 
+  final ImagePicker _imagePicker = ImagePicker();
+
   CameraController? _cameraController;
   List<CameraDescription>? _cameras;
 
@@ -90,6 +93,12 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   Map<String, dynamic>? _scannedSheetData;
 
   final Color _primaryThemeColor = const Color(0xFFC8A2C8);
+
+  bool _isLoadingDialogOpen = false;
+  bool _isCapturingPhoto = false;
+  Uint8List? _webPickedPreviewBytes;
+
+  bool get _isWebCameraFlow => kIsWeb;
 
   @override
   void initState() {
@@ -106,21 +115,36 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   }
 
   Future<void> _initPhotoCamera() async {
+    if (kIsWeb) return;
+
     _cameras = await availableCameras();
     if (_cameras != null && _cameras!.isNotEmpty) {
+      CameraDescription selectedCamera = _cameras!.first;
+
+      try {
+        selectedCamera = _cameras!.firstWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.back,
+        );
+      } catch (_) {}
+
       _cameraController = CameraController(
-        _cameras![0],
+        selectedCamera,
         ResolutionPreset.max,
         enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
       );
+
       await _cameraController!.initialize();
     }
   }
 
   Future<void> _resetToQrMode() async {
     setState(() => _currentState = ScannerState.processing);
+
     await _cameraController?.dispose();
     _cameraController = null;
+    _webPickedPreviewBytes = null;
+    _isCapturingPhoto = false;
 
     if (mounted) {
       setState(() {
@@ -128,6 +152,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         _scannedSheetData = null;
         _currentState = ScannerState.scanningQR;
       });
+
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _startScannerSafely();
       });
@@ -143,39 +168,66 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   void _showLoadingDialog(String message) {
     if (!mounted) return;
-    setState(() => _processingStatus = message);
+
+    _processingStatus = message;
+
+    if (_isLoadingDialogOpen) {
+      setState(() {});
+      return;
+    }
+
+    _isLoadingDialogOpen = true;
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        content: Center(
-          child: Container(
-            padding: EdgeInsets.all(20.w),
-            decoration: BoxDecoration(
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          content: Center(
+            child: Container(
+              padding: EdgeInsets.all(20.w),
+              decoration: BoxDecoration(
                 color: Theme.of(context).brightness == Brightness.dark
                     ? const Color(0xFF1E1E1E)
                     : Colors.white,
-                borderRadius: BorderRadius.circular(16.r)),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(color: _primaryThemeColor),
-                SizedBox(height: 20.h),
-                Text(_processingStatus,
-                    style: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center),
-              ],
+                borderRadius: BorderRadius.circular(16.r),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: _primaryThemeColor),
+                  SizedBox(height: 20.h),
+                  StatefulBuilder(
+                    builder: (_, setInnerState) {
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted && _isLoadingDialogOpen) {
+                          setInnerState(() {});
+                        }
+                      });
+                      return Text(
+                        _processingStatus,
+                        style: GoogleFonts.inter(fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
         ),
       ),
-    );
+    ).then((_) {
+      _isLoadingDialogOpen = false;
+    });
   }
 
   void _hideLoadingDialog() {
-    if (mounted) Navigator.pop(context);
+    if (!mounted || !_isLoadingDialogOpen) return;
+    Navigator.of(context, rootNavigator: true).pop();
   }
 
   void _onDetect(BarcodeCapture capture) async {
@@ -200,8 +252,10 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       final sheetData = await ExamApiService()
           .verifySheetData(qrCodeUuid: qrCodeUuid, token: token!);
 
-      setState(() => _processingStatus = "Preparando câmera...");
-      await _initPhotoCamera();
+      if (!kIsWeb) {
+        _processingStatus = "Preparando câmera...";
+        await _initPhotoCamera();
+      }
 
       _hideLoadingDialog();
 
@@ -212,23 +266,49 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       });
     } catch (e) {
       _hideLoadingDialog();
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red));
+          SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+        );
         await _resetToQrMode();
       }
     }
   }
 
   Future<void> _takePhotoAndSendToAI() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized)
-      return;
+    if (_isCapturingPhoto) return;
 
+    _isCapturingPhoto = true;
     setState(() => _currentState = ScannerState.processing);
 
     try {
-      final XFile photo = await _cameraController!.takePicture();
-      final Uint8List fullImageBytes = await photo.readAsBytes();
+      Uint8List fullImageBytes;
+
+      if (_isWebCameraFlow) {
+        final XFile? pickedFile = await _imagePicker.pickImage(
+          source: ImageSource.camera,
+          preferredCameraDevice: CameraDevice.rear,
+          imageQuality: 92,
+        );
+
+        if (pickedFile == null) {
+          setState(() => _currentState = ScannerState.takingPhoto);
+          _isCapturingPhoto = false;
+          return;
+        }
+
+        fullImageBytes = await pickedFile.readAsBytes();
+        _webPickedPreviewBytes = fullImageBytes;
+      } else {
+        if (_cameraController == null ||
+            !_cameraController!.value.isInitialized) {
+          throw Exception('Câmera não inicializada.');
+        }
+
+        final XFile photo = await _cameraController!.takePicture();
+        fullImageBytes = await photo.readAsBytes();
+      }
 
       _showLoadingDialog("Recortando imagem...");
 
@@ -236,8 +316,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       final isBubbleSheet =
           _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
 
-      // 👇 AJUSTE DA MÁSCARA: Reduzida a altura (de 1.30 para 1.05)
-      // Isso forma quase um quadrado perfeito para focar só na máquina de leitura
       final boxW =
           isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
       final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
@@ -265,7 +343,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       _hideLoadingDialog();
 
       if (mounted) {
-        // Extrai a nota e os detalhes da correção com segurança
         final rawGrade = aiResult['grade'];
         double? detectedGrade;
         if (rawGrade != null) {
@@ -281,19 +358,108 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
           _scannedQrCodeUuid!,
           _scannedSheetData!,
           autoDetectedGrade: detectedGrade,
-          correctionDetails:
-              details, // Passa a lista de acertos/erros pro modal
+          correctionDetails: details,
         );
       }
     } catch (e) {
       _hideLoadingDialog();
+
       if (mounted) {
         final cleanError = e.toString().replaceAll('Exception: ', '');
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(cleanError), backgroundColor: Colors.red));
+          SnackBar(content: Text(cleanError), backgroundColor: Colors.red),
+        );
 
         setState(() => _currentState = ScannerState.takingPhoto);
       }
+    } finally {
+      _isCapturingPhoto = false;
+    }
+  }
+
+  Future<void> _pickPhotoFromGalleryFallback() async {
+    if (_isCapturingPhoto) return;
+
+    _isCapturingPhoto = true;
+    setState(() => _currentState = ScannerState.processing);
+
+    try {
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 92,
+      );
+
+      if (pickedFile == null) {
+        setState(() => _currentState = ScannerState.takingPhoto);
+        return;
+      }
+
+      final Uint8List fullImageBytes = await pickedFile.readAsBytes();
+      _webPickedPreviewBytes = fullImageBytes;
+
+      _showLoadingDialog("Recortando imagem...");
+
+      final screenSize = MediaQuery.of(context).size;
+      final isBubbleSheet =
+          _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
+
+      final boxW =
+          isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
+      final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
+
+      final Uint8List croppedBytes = await compute(processImageCrop, {
+        'bytes': fullImageBytes,
+        'screenW': screenSize.width,
+        'screenH': screenSize.height,
+        'boxW': boxW,
+        'boxH': boxH,
+      });
+
+      _hideLoadingDialog();
+      _showLoadingDialog("Analisando gabarito com IA...");
+
+      final token = Provider.of<AuthProvider>(context, listen: false).token;
+
+      final aiResult = await ExamApiService().processOmrImage(
+        imageBytes: croppedBytes,
+        token: token!,
+        correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
+        examId: _scannedSheetData?['examId'],
+      );
+
+      _hideLoadingDialog();
+
+      if (mounted) {
+        final rawGrade = aiResult['grade'];
+        double? detectedGrade;
+        if (rawGrade != null) {
+          detectedGrade = (rawGrade as num).toDouble();
+        }
+
+        List<dynamic>? details;
+        if (aiResult['correctionDetails'] != null) {
+          details = aiResult['correctionDetails'] as List<dynamic>;
+        }
+
+        await _showGradeConfirmationModal(
+          _scannedQrCodeUuid!,
+          _scannedSheetData!,
+          autoDetectedGrade: detectedGrade,
+          correctionDetails: details,
+        );
+      }
+    } catch (e) {
+      _hideLoadingDialog();
+
+      if (mounted) {
+        final cleanError = e.toString().replaceAll('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(cleanError), backgroundColor: Colors.red),
+        );
+        setState(() => _currentState = ScannerState.takingPhoto);
+      }
+    } finally {
+      _isCapturingPhoto = false;
     }
   }
 
@@ -313,12 +479,65 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
   }
 
-  // 👇 ATUALIZADO: Agora recebe os correctionDetails e mostra um painel sanfona
+  Widget _buildWebCapturePlaceholder() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (_webPickedPreviewBytes != null)
+          Image.memory(
+            _webPickedPreviewBytes!,
+            fit: BoxFit.cover,
+          )
+        else
+          Container(
+            color: Colors.black,
+            child: Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 28.w),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      PhosphorIcons.camera,
+                      color: Colors.white,
+                      size: 60.sp,
+                    ),
+                    SizedBox(height: 18.h),
+                    Text(
+                      "Captura via navegador",
+                      style: GoogleFonts.saira(
+                        color: Colors.white,
+                        fontSize: 24.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    SizedBox(height: 10.h),
+                    Text(
+                      "No iPhone pela web, vamos usar a câmera nativa do navegador para tirar a foto do gabarito com mais compatibilidade.",
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14.sp,
+                        height: 1.4,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   Future<double?> _showGradeConfirmationModal(
-      String qrCodeUuid, Map<String, dynamic> sheetData,
-      {double? autoDetectedGrade,
-      List<dynamic>? correctionDetails,
-      bool fromManualMode = false}) async {
+    String qrCodeUuid,
+    Map<String, dynamic> sheetData, {
+    double? autoDetectedGrade,
+    List<dynamic>? correctionDetails,
+    bool fromManualMode = false,
+  }) async {
     final TextEditingController gradeController = TextEditingController(
       text:
           autoDetectedGrade != null ? autoDetectedGrade.toStringAsFixed(1) : '',
@@ -343,7 +562,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
           builder: (BuildContext context, StateSetter setModalState) {
             return Padding(
               padding: EdgeInsets.only(
-                  bottom: MediaQuery.of(context).viewInsets.bottom),
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+              ),
               child: Container(
                 padding: EdgeInsets.all(24.w),
                 decoration: BoxDecoration(
@@ -351,24 +571,29 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   borderRadius:
                       BorderRadius.vertical(top: Radius.circular(24.r)),
                 ),
-                // Transformamos em SingleChildScrollView para evitar transbordamento da tela
                 child: SingleChildScrollView(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Center(
-                          child: Container(
-                              width: 40.w,
-                              height: 4.h,
-                              decoration: BoxDecoration(
-                                  color: Colors.grey[300],
-                                  borderRadius: BorderRadius.circular(2)))),
+                        child: Container(
+                          width: 40.w,
+                          height: 4.h,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[300],
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
                       SizedBox(height: 20.h),
                       Row(
                         children: [
-                          Icon(PhosphorIcons.user_focus,
-                              size: 40.sp, color: _primaryThemeColor),
+                          Icon(
+                            PhosphorIcons.user_focus,
+                            size: 40.sp,
+                            color: _primaryThemeColor,
+                          ),
                           SizedBox(width: 15.w),
                           Expanded(
                             child: Column(
@@ -378,22 +603,26 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                   sheetData['studentName']?.toUpperCase() ??
                                       'ALUNO DESCONHECIDO',
                                   style: GoogleFonts.saira(
-                                      fontSize: 20.sp,
-                                      fontWeight: FontWeight.bold,
-                                      height: 1.1),
+                                    fontSize: 20.sp,
+                                    fontWeight: FontWeight.bold,
+                                    height: 1.1,
+                                  ),
                                 ),
                                 SizedBox(height: 4.h),
                                 Text(
                                   "${sheetData['subjectName']} • ${sheetData['className']}",
                                   style: TextStyle(
-                                      color: Colors.indigo,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13.sp),
+                                    color: Colors.indigo,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13.sp,
+                                  ),
                                 ),
                                 Text(
                                   "${sheetData['examTitle']} • $schoolName",
                                   style: TextStyle(
-                                      color: Colors.grey[600], fontSize: 12.sp),
+                                    color: Colors.grey[600],
+                                    fontSize: 12.sp,
+                                  ),
                                 ),
                               ],
                             ),
@@ -407,21 +636,30 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                           child: Center(
                             child: Container(
                               padding: EdgeInsets.symmetric(
-                                  horizontal: 12.w, vertical: 6.h),
+                                horizontal: 12.w,
+                                vertical: 6.h,
+                              ),
                               decoration: BoxDecoration(
-                                  color: _primaryThemeColor.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(20.r)),
+                                color: _primaryThemeColor.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(20.r),
+                              ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(PhosphorIcons.magic_wand_fill,
-                                      color: _primaryThemeColor, size: 14.sp),
+                                  Icon(
+                                    PhosphorIcons.magic_wand_fill,
+                                    color: _primaryThemeColor,
+                                    size: 14.sp,
+                                  ),
                                   SizedBox(width: 6.w),
-                                  Text("Nota calculada pela IA",
-                                      style: TextStyle(
-                                          color: _primaryThemeColor,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 12.sp)),
+                                  Text(
+                                    "Nota calculada pela IA",
+                                    style: TextStyle(
+                                      color: _primaryThemeColor,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12.sp,
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
@@ -431,36 +669,40 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                         Padding(
                           padding: EdgeInsets.only(bottom: 10.h),
                           child: Center(
-                            child: Text("Lançamento Manual",
-                                style: TextStyle(
-                                    color: Colors.grey[500],
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12.sp)),
+                            child: Text(
+                              "Lançamento Manual",
+                              style: TextStyle(
+                                color: Colors.grey[500],
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12.sp,
+                              ),
+                            ),
                           ),
                         ),
                       TextField(
                         controller: gradeController,
                         keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
+                          decimal: true,
+                        ),
                         autofocus: autoDetectedGrade == null,
                         textAlign: TextAlign.center,
                         style: GoogleFonts.inter(
-                            fontSize: 48.sp,
-                            fontWeight: FontWeight.bold,
-                            color: isDark ? Colors.white : Colors.black),
+                          fontSize: 48.sp,
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
                         decoration: InputDecoration(
                           hintText: "0.0",
                           hintStyle: TextStyle(color: Colors.grey[300]),
                           border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(16.r),
-                              borderSide: BorderSide.none),
+                            borderRadius: BorderRadius.circular(16.r),
+                            borderSide: BorderSide.none,
+                          ),
                           filled: true,
                           fillColor: isDark ? Colors.black26 : Colors.grey[100],
                           contentPadding: EdgeInsets.symmetric(vertical: 20.h),
                         ),
                       ),
-
-                      // 👇 EXPANSION TILE COM OS DETALHES DAS QUESTÕES
                       if (correctionDetails != null &&
                           correctionDetails.isNotEmpty) ...[
                         SizedBox(height: 15.h),
@@ -469,36 +711,39 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                               .copyWith(dividerColor: Colors.transparent),
                           child: ExpansionTile(
                             tilePadding: EdgeInsets.zero,
-                            title: Text("Detalhes da Correção Automática",
-                                style: TextStyle(
-                                    fontSize: 14.sp,
-                                    fontWeight: FontWeight.bold,
-                                    color: isDark
-                                        ? Colors.grey[300]
-                                        : Colors.grey[700])),
+                            title: Text(
+                              "Detalhes da Correção Automática",
+                              style: TextStyle(
+                                fontSize: 14.sp,
+                                fontWeight: FontWeight.bold,
+                                color: isDark
+                                    ? Colors.grey[300]
+                                    : Colors.grey[700],
+                              ),
+                            ),
                             iconColor: isDark ? Colors.white : Colors.black,
                             collapsedIconColor:
                                 isDark ? Colors.grey[400] : Colors.grey[600],
                             children: [
                               Container(
-                                constraints: BoxConstraints(
-                                    maxHeight: 250
-                                        .h), // Limita altura para poder rolar a lista
+                                constraints: BoxConstraints(maxHeight: 250.h),
                                 decoration: BoxDecoration(
                                   border: Border.all(
-                                      color: isDark
-                                          ? Colors.grey[800]!
-                                          : Colors.grey[300]!),
+                                    color: isDark
+                                        ? Colors.grey[800]!
+                                        : Colors.grey[300]!,
+                                  ),
                                   borderRadius: BorderRadius.circular(12.r),
                                 ),
                                 child: ListView.separated(
                                   shrinkWrap: true,
                                   itemCount: correctionDetails.length,
                                   separatorBuilder: (_, __) => Divider(
-                                      height: 1,
-                                      color: isDark
-                                          ? Colors.grey[800]
-                                          : Colors.grey[200]),
+                                    height: 1,
+                                    color: isDark
+                                        ? Colors.grey[800]
+                                        : Colors.grey[200],
+                                  ),
                                   itemBuilder: (context, index) {
                                     final detail = correctionDetails[index];
                                     final isCorrect =
@@ -520,10 +765,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                       title: Text(
                                         'Questão ${detail['questionNumber']}',
                                         style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: isDark
-                                                ? Colors.white
-                                                : Colors.black),
+                                          fontWeight: FontWeight.bold,
+                                          color: isDark
+                                              ? Colors.white
+                                              : Colors.black,
+                                        ),
                                       ),
                                       subtitle: Text(
                                         marked == null
@@ -532,16 +778,18 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                                 ? 'Acertou (Marcou $marked)'
                                                 : 'Errou (Marcou $marked, era $correctAns)'),
                                         style: TextStyle(
-                                            color: isCorrect
-                                                ? Colors.green
-                                                : Colors.red,
-                                            fontSize: 12.sp),
+                                          color: isCorrect
+                                              ? Colors.green
+                                              : Colors.red,
+                                          fontSize: 12.sp,
+                                        ),
                                       ),
                                       trailing: Text(
                                         '+${detail['earnedPoints']} pts',
                                         style: TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.grey[600]),
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.grey[600],
+                                        ),
                                       ),
                                     );
                                   },
@@ -551,7 +799,6 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                           ),
                         ),
                       ],
-
                       SizedBox(height: 30.h),
                       Row(
                         children: [
@@ -561,14 +808,16 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                   ? null
                                   : () async {
                                       Navigator.pop(context);
-                                      if (!fromManualMode)
+                                      if (!fromManualMode) {
                                         await _resetToQrMode();
+                                      }
                                     },
                               style: OutlinedButton.styleFrom(
-                                  padding: EdgeInsets.symmetric(vertical: 16.h),
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(12.r))),
+                                padding: EdgeInsets.symmetric(vertical: 16.h),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12.r),
+                                ),
+                              ),
                               child: const Text("Cancelar"),
                             ),
                           ),
@@ -587,11 +836,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                           finalGrade < 0 ||
                                           finalGrade > 10) {
                                         ScaffoldMessenger.of(context)
-                                            .showSnackBar(const SnackBar(
-                                                content: Text(
-                                                    'Digite uma nota válida entre 0 e 10.'),
-                                                backgroundColor:
-                                                    Colors.orange));
+                                            .showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Digite uma nota válida entre 0 e 10.',
+                                            ),
+                                            backgroundColor: Colors.orange,
+                                          ),
+                                        );
                                         return;
                                       }
 
@@ -599,9 +851,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
                                       try {
                                         final token = Provider.of<AuthProvider>(
-                                                context,
-                                                listen: false)
-                                            .token;
+                                          context,
+                                          listen: false,
+                                        ).token;
 
                                         await ExamApiService()
                                             .scanAndGradeSheet(
@@ -613,11 +865,15 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         if (mounted) {
                                           Navigator.pop(context);
                                           ScaffoldMessenger.of(context)
-                                              .showSnackBar(SnackBar(
-                                                  content: const Text(
-                                                      'Nota salva com sucesso!'),
-                                                  backgroundColor:
-                                                      _primaryThemeColor));
+                                              .showSnackBar(
+                                            SnackBar(
+                                              content: const Text(
+                                                'Nota salva com sucesso!',
+                                              ),
+                                              backgroundColor:
+                                                  _primaryThemeColor,
+                                            ),
+                                          );
 
                                           if (fromManualMode) {
                                             finalReturnedGrade = finalGrade;
@@ -627,9 +883,12 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         }
                                       } catch (e) {
                                         ScaffoldMessenger.of(context)
-                                            .showSnackBar(SnackBar(
-                                                content: Text('Erro: $e'),
-                                                backgroundColor: Colors.red));
+                                            .showSnackBar(
+                                          SnackBar(
+                                            content: Text('Erro: $e'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
                                         setModalState(() => isSaving = false);
                                       }
                                     },
@@ -638,17 +897,24 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                 foregroundColor: Colors.white,
                                 padding: EdgeInsets.symmetric(vertical: 16.h),
                                 shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12.r)),
+                                  borderRadius: BorderRadius.circular(12.r),
+                                ),
                               ),
                               child: isSaving
                                   ? SizedBox(
                                       width: 20.w,
                                       height: 20.w,
                                       child: const CircularProgressIndicator(
-                                          color: Colors.white, strokeWidth: 2))
-                                  : const Text("Confirmar",
+                                        color: Colors.white,
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Text(
+                                      "Confirmar",
                                       style: TextStyle(
-                                          fontWeight: FontWeight.bold)),
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                             ),
                           ),
                         ],
@@ -687,6 +953,16 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final showNativeCameraPreview = !kIsWeb &&
+        (_currentState == ScannerState.takingPhoto ||
+            _currentState == ScannerState.processing) &&
+        _cameraController != null &&
+        _cameraController!.value.isInitialized;
+
+    final showWebCaptureStage = kIsWeb &&
+        (_currentState == ScannerState.takingPhoto ||
+            _currentState == ScannerState.processing);
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
@@ -696,13 +972,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
               controller: _scannerController,
               onDetect: _onDetect,
             )
-          else if ((_currentState == ScannerState.takingPhoto ||
-                  _currentState == ScannerState.processing) &&
-              _cameraController != null &&
-              _cameraController!.value.isInitialized)
+          else if (showNativeCameraPreview)
             _buildUndistortedCameraPreview()
+          else if (showWebCaptureStage)
+            _buildWebCapturePlaceholder()
           else
-            const Center(child: CircularProgressIndicator(color: Colors.white)),
+            const Center(
+              child: CircularProgressIndicator(color: Colors.white),
+            ),
           if (_currentState == ScannerState.scanningQR)
             _buildQrScannerOverlay()
           else if (_currentState == ScannerState.takingPhoto ||
@@ -713,9 +990,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
             left: 20.w,
             child: Container(
               decoration: const BoxDecoration(
-                  color: Colors.black54, shape: BoxShape.circle),
+                color: Colors.black54,
+                shape: BoxShape.circle,
+              ),
               child: IconButton(
-                icon: const Icon(PhosphorIcons.arrow_left, color: Colors.white),
+                icon: const Icon(
+                  PhosphorIcons.arrow_left,
+                  color: Colors.white,
+                ),
                 onPressed: () async {
                   if (_currentState == ScannerState.takingPhoto) {
                     await _resetToQrMode();
@@ -732,13 +1014,19 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
               right: 20.w,
               child: Container(
                 decoration: const BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.all(Radius.circular(20))),
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.all(Radius.circular(20)),
+                ),
                 child: TextButton.icon(
-                  icon: const Icon(PhosphorIcons.keyboard,
-                      color: Colors.white, size: 18),
-                  label: const Text("Modo Manual",
-                      style: TextStyle(color: Colors.white)),
+                  icon: const Icon(
+                    PhosphorIcons.keyboard,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+                  label: const Text(
+                    "Modo Manual",
+                    style: TextStyle(color: Colors.white),
+                  ),
                   onPressed: _openManualEntryFlow,
                 ),
               ),
@@ -749,171 +1037,252 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   }
 
   Widget _buildQrScannerOverlay() {
-    return LayoutBuilder(builder: (context, constraints) {
-      final scanWindowSize = constraints.maxWidth * 0.7;
-      final horizontalPadding = (constraints.maxWidth - scanWindowSize) / 2;
-      final verticalPadding = (constraints.maxHeight - scanWindowSize) / 2;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scanWindowSize = constraints.maxWidth * 0.7;
+        final horizontalPadding = (constraints.maxWidth - scanWindowSize) / 2;
+        final verticalPadding = (constraints.maxHeight - scanWindowSize) / 2;
 
-      return Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
+        return Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
                     color: Colors.black.withOpacity(0.5),
-                    width: verticalPadding),
-                bottom: BorderSide(
+                    width: verticalPadding,
+                  ),
+                  bottom: BorderSide(
                     color: Colors.black.withOpacity(0.5),
-                    width: verticalPadding),
-                left: BorderSide(
+                    width: verticalPadding,
+                  ),
+                  left: BorderSide(
                     color: Colors.black.withOpacity(0.5),
-                    width: horizontalPadding),
-                right: BorderSide(
+                    width: horizontalPadding,
+                  ),
+                  right: BorderSide(
                     color: Colors.black.withOpacity(0.5),
-                    width: horizontalPadding),
-              ),
-            ),
-            child: Center(
-              child: Container(
-                height: scanWindowSize,
-                width: scanWindowSize,
-                decoration: BoxDecoration(
-                  border: Border.all(
-                      color: _primaryThemeColor.withOpacity(0.8), width: 3),
-                  borderRadius: BorderRadius.circular(16.r),
+                    width: horizontalPadding,
+                  ),
                 ),
               ),
-            ),
-          ),
-          Positioned(
-            bottom: 100.h,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Container(
-                padding: EdgeInsets.symmetric(horizontal: 20.w, vertical: 10.h),
-                decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(20.r)),
-                child: Text("1º Passo: Aponte para o QR Code",
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 14.sp,
-                        fontWeight: FontWeight.bold)),
-              ),
-            ),
-          )
-        ],
-      );
-    });
-  }
-
-  Widget _buildPhotoCaptureOverlay() {
-    return LayoutBuilder(builder: (context, constraints) {
-      final isBubbleSheet =
-          _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
-
-      // 👇 DIMENSÕES DINÂMICAS: Mais "quadrado" pro cartão novo
-      final boxWidth = isBubbleSheet
-          ? constraints.maxWidth * 0.85
-          : constraints.maxWidth * 0.90;
-      final boxHeight = isBubbleSheet ? boxWidth * 1.05 : boxWidth * 0.55;
-
-      final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
-      final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
-
-      return Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              border: Border(
-                top: BorderSide(
-                    color: Colors.black.withOpacity(0.7),
-                    width: verticalPadding),
-                bottom: BorderSide(
-                    color: Colors.black.withOpacity(0.7),
-                    width: verticalPadding),
-                left: BorderSide(
-                    color: Colors.black.withOpacity(0.7),
-                    width: horizontalPadding),
-                right: BorderSide(
-                    color: Colors.black.withOpacity(0.7),
-                    width: horizontalPadding),
-              ),
-            ),
-            child: Center(
-              child: Container(
-                height: boxHeight,
-                width: boxWidth,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.greenAccent, width: 3),
-                  borderRadius: BorderRadius.circular(8.r),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            top: 100.h,
-            left: 0,
-            right: 0,
-            child: Column(
-              children: [
-                Text("Aluno Identificado:",
-                    style: TextStyle(color: Colors.grey[300], fontSize: 14.sp)),
-                Text(_scannedSheetData?['studentName']?.toUpperCase() ?? '',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18.sp,
-                        fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center),
-              ],
-            ),
-          ),
-          Positioned(
-            bottom: 60.h,
-            left: 0,
-            right: 0,
-            child: Column(
-              children: [
-                Container(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 20.w, vertical: 8.h),
+              child: Center(
+                child: Container(
+                  height: scanWindowSize,
+                  width: scanWindowSize,
                   decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(16.r)),
-                  child: Text(
-                      "Encaixe as 4 âncoras pretas dentro da linha verde",
-                      style: TextStyle(color: Colors.white, fontSize: 12.sp)),
-                ),
-                SizedBox(height: 20.h),
-                GestureDetector(
-                  onTap: _takePhotoAndSendToAI,
-                  child: Container(
-                    height: 70.w,
-                    width: 70.w,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.grey[400]!, width: 4),
+                    border: Border.all(
+                      color: _primaryThemeColor.withOpacity(0.8),
+                      width: 3,
                     ),
-                    child: Center(
-                      child: Container(
-                        height: 55.w,
-                        width: 55.w,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
+                    borderRadius: BorderRadius.circular(16.r),
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 100.h,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 20.w,
+                    vertical: 10.h,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black87,
+                    borderRadius: BorderRadius.circular(20.r),
+                  ),
+                  child: Text(
+                    "1º Passo: Aponte para o QR Code",
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 14.sp,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
                 ),
-              ],
+              ),
+            )
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildPhotoCaptureOverlay() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isBubbleSheet =
+            _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
+
+        final boxWidth = isBubbleSheet
+            ? constraints.maxWidth * 0.85
+            : constraints.maxWidth * 0.90;
+        final boxHeight = isBubbleSheet ? boxWidth * 1.05 : boxWidth * 0.55;
+
+        final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
+        final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
+
+        return Stack(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: verticalPadding,
+                  ),
+                  bottom: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: verticalPadding,
+                  ),
+                  left: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: horizontalPadding,
+                  ),
+                  right: BorderSide(
+                    color: Colors.black.withOpacity(0.7),
+                    width: horizontalPadding,
+                  ),
+                ),
+              ),
+              child: Center(
+                child: Container(
+                  height: boxHeight,
+                  width: boxWidth,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.greenAccent, width: 3),
+                    borderRadius: BorderRadius.circular(8.r),
+                  ),
+                ),
+              ),
             ),
-          )
-        ],
-      );
-    });
+            Positioned(
+              top: 100.h,
+              left: 0,
+              right: 0,
+              child: Column(
+                children: [
+                  Text(
+                    "Aluno Identificado:",
+                    style: TextStyle(
+                      color: Colors.grey[300],
+                      fontSize: 14.sp,
+                    ),
+                  ),
+                  Text(
+                    _scannedSheetData?['studentName']?.toUpperCase() ?? '',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18.sp,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              bottom: 60.h,
+              left: 0,
+              right: 0,
+              child: Column(
+                children: [
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 20.w,
+                      vertical: 8.h,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(16.r),
+                    ),
+                    child: Text(
+                      kIsWeb
+                          ? "No iPhone/web, toque para abrir a câmera do navegador e fotografe o gabarito"
+                          : "Encaixe as 4 âncoras pretas dentro da linha verde",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.sp,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  SizedBox(height: 20.h),
+                  if (kIsWeb)
+                    Column(
+                      children: [
+                        GestureDetector(
+                          onTap: _takePhotoAndSendToAI,
+                          child: Container(
+                            height: 70.w,
+                            width: 70.w,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: Colors.grey[400]!,
+                                width: 4,
+                              ),
+                            ),
+                            child: Center(
+                              child: Icon(
+                                PhosphorIcons.camera,
+                                color: Colors.black,
+                                size: 28.sp,
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: 14.h),
+                        TextButton.icon(
+                          onPressed: _pickPhotoFromGalleryFallback,
+                          icon: const Icon(
+                            PhosphorIcons.image,
+                            color: Colors.white,
+                          ),
+                          label: const Text(
+                            "Escolher da galeria",
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    GestureDetector(
+                      onTap: _takePhotoAndSendToAI,
+                      child: Container(
+                        height: 70.w,
+                        width: 70.w,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Colors.grey[400]!,
+                            width: 4,
+                          ),
+                        ),
+                        child: Center(
+                          child: Container(
+                            height: 55.w,
+                            width: 55.w,
+                            decoration: const BoxDecoration(
+                              color: Colors.white,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            )
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -921,10 +1290,13 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 // WIDGET EXCLUSIVO PARA O BOTTOM SHEET DO MODO MANUAL
 // =========================================================================
 class _ManualEntrySheet extends StatefulWidget {
-  final Future<double?> Function(String, Map<String, dynamic>,
-      {double? autoDetectedGrade,
-      List<dynamic>? correctionDetails,
-      bool fromManualMode}) openGradeModal;
+  final Future<double?> Function(
+    String,
+    Map<String, dynamic>, {
+    double? autoDetectedGrade,
+    List<dynamic>? correctionDetails,
+    bool fromManualMode,
+  }) openGradeModal;
 
   const _ManualEntrySheet({required this.openGradeModal});
 
@@ -998,8 +1370,9 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
               width: 40.w,
               height: 4.h,
               decoration: BoxDecoration(
-                  color: Colors.grey[400],
-                  borderRadius: BorderRadius.circular(2)),
+                color: Colors.grey[400],
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
           Padding(
@@ -1008,8 +1381,10 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
               children: [
                 if (_selectedExam != null)
                   IconButton(
-                    icon: Icon(PhosphorIcons.arrow_left,
-                        color: isDark ? Colors.white : Colors.black),
+                    icon: Icon(
+                      PhosphorIcons.arrow_left,
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
                     onPressed: () => setState(() => _selectedExam = null),
                   ),
                 Expanded(
@@ -1018,9 +1393,10 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                         ? "Selecione a Prova"
                         : _selectedExam!.title,
                     style: GoogleFonts.saira(
-                        fontSize: 20.sp,
-                        fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : Colors.black),
+                      fontSize: 20.sp,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white : Colors.black,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1030,9 +1406,10 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
           ),
           if (isLoading)
             Expanded(
-                child: Center(
-                    child:
-                        CircularProgressIndicator(color: _primaryThemeColor)))
+              child: Center(
+                child: CircularProgressIndicator(color: _primaryThemeColor),
+              ),
+            )
           else if (_selectedExam == null)
             Expanded(
               child: ListView.builder(
@@ -1044,14 +1421,21 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                         EdgeInsets.symmetric(horizontal: 24.w, vertical: 8.h),
                     leading: CircleAvatar(
                       backgroundColor: _primaryThemeColor.withOpacity(0.2),
-                      child: Icon(PhosphorIcons.file_text,
-                          color: _primaryThemeColor),
+                      child: Icon(
+                        PhosphorIcons.file_text,
+                        color: _primaryThemeColor,
+                      ),
                     ),
-                    title: Text(exam.title,
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 16.sp)),
+                    title: Text(
+                      exam.title,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16.sp,
+                      ),
+                    ),
                     subtitle: Text(
-                        "${exam.subjectName ?? 'Disciplina'} • ${exam.className ?? 'Turma'}"),
+                      "${exam.subjectName ?? 'Disciplina'} • ${exam.className ?? 'Turma'}",
+                    ),
                     trailing: const Icon(PhosphorIcons.caret_right),
                     onTap: () => _fetchStudents(exam),
                   );
@@ -1074,109 +1458,137 @@ class _ManualEntrySheetState extends State<_ManualEntrySheet> {
                         filled: true,
                         fillColor: isDark ? Colors.black26 : Colors.white,
                         border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12.r),
-                            borderSide: BorderSide.none),
+                          borderRadius: BorderRadius.circular(12.r),
+                          borderSide: BorderSide.none,
+                        ),
                       ),
                     ),
                   ),
                   Expanded(
-                    child: Builder(builder: (context) {
-                      var filtered = _studentsList?.where((s) {
-                            return s['studentName']
-                                .toString()
-                                .toLowerCase()
-                                .contains(_searchQuery);
-                          }).toList() ??
-                          [];
+                    child: Builder(
+                      builder: (context) {
+                        var filtered = _studentsList?.where((s) {
+                              return s['studentName']
+                                  .toString()
+                                  .toLowerCase()
+                                  .contains(_searchQuery);
+                            }).toList() ??
+                            [];
 
-                      filtered.sort((a, b) {
-                        if (a['status'] == 'SCANNED' &&
-                            b['status'] != 'SCANNED') return 1;
-                        if (a['status'] != 'SCANNED' &&
-                            b['status'] == 'SCANNED') return -1;
-                        return 0;
-                      });
+                        filtered.sort((a, b) {
+                          if (a['status'] == 'SCANNED' &&
+                              b['status'] != 'SCANNED') {
+                            return 1;
+                          }
+                          if (a['status'] != 'SCANNED' &&
+                              b['status'] == 'SCANNED') {
+                            return -1;
+                          }
+                          return 0;
+                        });
 
-                      if (filtered.isEmpty) {
-                        return const Center(
-                            child: Text("Nenhum aluno encontrado.",
-                                style: TextStyle(color: Colors.grey)));
-                      }
+                        if (filtered.isEmpty) {
+                          return const Center(
+                            child: Text(
+                              "Nenhum aluno encontrado.",
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          );
+                        }
 
-                      return ListView.builder(
-                        itemCount: filtered.length,
-                        itemBuilder: (context, index) {
-                          final student = filtered[index];
-                          final isScanned = student['status'] == 'SCANNED';
+                        return ListView.builder(
+                          itemCount: filtered.length,
+                          itemBuilder: (context, index) {
+                            final student = filtered[index];
+                            final isScanned = student['status'] == 'SCANNED';
 
-                          return ListTile(
-                            contentPadding: EdgeInsets.symmetric(
-                                horizontal: 24.w, vertical: 4.h),
-                            title: Text(student['studentName'],
+                            return ListTile(
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 24.w,
+                                vertical: 4.h,
+                              ),
+                              title: Text(
+                                student['studentName'],
                                 style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14.sp)),
-                            subtitle: Text(
-                                "Matrícula: ${student['registration'] ?? 'N/A'}"),
-                            trailing: isScanned
-                                ? Container(
-                                    padding: EdgeInsets.symmetric(
-                                        horizontal: 12.w, vertical: 6.h),
-                                    decoration: BoxDecoration(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14.sp,
+                                ),
+                              ),
+                              subtitle: Text(
+                                "Matrícula: ${student['registration'] ?? 'N/A'}",
+                              ),
+                              trailing: isScanned
+                                  ? Container(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 12.w,
+                                        vertical: 6.h,
+                                      ),
+                                      decoration: BoxDecoration(
                                         color: Colors.green.withOpacity(0.2),
                                         borderRadius:
-                                            BorderRadius.circular(20.r)),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Text(student['grade'].toString(),
+                                            BorderRadius.circular(20.r),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            student['grade'].toString(),
                                             style: TextStyle(
-                                                color: Colors.green,
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 16.sp)),
-                                        SizedBox(width: 4.w),
-                                        Icon(PhosphorIcons.check_circle_fill,
-                                            color: Colors.green, size: 16.sp),
-                                      ],
-                                    ),
-                                  )
-                                : ElevatedButton(
-                                    onPressed: () async {
-                                      final mockSheetData = {
-                                        'studentName': student['studentName'],
-                                        'subjectName':
-                                            _selectedExam?.subjectName ?? '',
-                                        'className':
-                                            _selectedExam?.className ?? '',
-                                        'examTitle': _selectedExam?.title ?? '',
-                                      };
+                                              color: Colors.green,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16.sp,
+                                            ),
+                                          ),
+                                          SizedBox(width: 4.w),
+                                          Icon(
+                                            PhosphorIcons.check_circle_fill,
+                                            color: Colors.green,
+                                            size: 16.sp,
+                                          ),
+                                        ],
+                                      ),
+                                    )
+                                  : ElevatedButton(
+                                      onPressed: () async {
+                                        final mockSheetData = {
+                                          'studentName': student['studentName'],
+                                          'subjectName':
+                                              _selectedExam?.subjectName ?? '',
+                                          'className':
+                                              _selectedExam?.className ?? '',
+                                          'examTitle':
+                                              _selectedExam?.title ?? '',
+                                        };
 
-                                      final finalGrade =
-                                          await widget.openGradeModal(
-                                              student['qrCodeUuid'],
-                                              mockSheetData,
-                                              fromManualMode: true);
+                                        final finalGrade =
+                                            await widget.openGradeModal(
+                                          student['qrCodeUuid'],
+                                          mockSheetData,
+                                          fromManualMode: true,
+                                        );
 
-                                      if (finalGrade != null) {
-                                        setState(() {
-                                          student['status'] = 'SCANNED';
-                                          student['grade'] = finalGrade;
-                                        });
-                                      }
-                                    },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: _primaryThemeColor,
-                                      foregroundColor: Colors.white,
-                                      shape: RoundedRectangleBorder(
+                                        if (finalGrade != null) {
+                                          setState(() {
+                                            student['status'] = 'SCANNED';
+                                            student['grade'] = finalGrade;
+                                          });
+                                        }
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: _primaryThemeColor,
+                                        foregroundColor: Colors.white,
+                                        shape: RoundedRectangleBorder(
                                           borderRadius:
-                                              BorderRadius.circular(8.r)),
+                                              BorderRadius.circular(8.r),
+                                        ),
+                                      ),
+                                      child: const Text("Lançar Nota"),
                                     ),
-                                    child: const Text("Lançar Nota"),
-                                  ),
-                          );
-                        },
-                      );
-                    }),
+                            );
+                          },
+                        );
+                      },
+                    ),
                   )
                 ],
               ),

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -16,7 +17,10 @@ class CustomSpeedDialMenu extends StatefulWidget {
   // [NOVO] Ação do Scanner de Provas
   final VoidCallback? onNavigateToScanner;
 
-  // Ações de Aluno (Opcionais para não quebrar telas antigas)
+  // [NOVO] Ação do Boletim para Professor
+  final VoidCallback? onNavigateToReportCards;
+
+  // Ações de Aluno
   final VoidCallback? onStudentAction1; // Ex: Boletim
   final VoidCallback? onStudentAction2; // Ex: Comunicados/Mural
 
@@ -29,7 +33,8 @@ class CustomSpeedDialMenu extends StatefulWidget {
     required this.onTabSelected,
     required this.onNavigateToStaff,
     required this.onNavigateToAttendance,
-    this.onNavigateToScanner, // <-- INJETADO AQUI
+    this.onNavigateToScanner,
+    this.onNavigateToReportCards,
     this.onStudentAction1,
     this.onStudentAction2,
     this.isProfessor = false,
@@ -45,11 +50,13 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
   late AnimationController _controller;
   late Animation<double> _expandAnimation;
   late Animation<double> _rotateAnimation;
+
   bool _isOpen = false;
 
   @override
   void initState() {
     super.initState();
+
     _controller = AnimationController(
       duration: const Duration(milliseconds: 300),
       vsync: this,
@@ -82,6 +89,101 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
     });
   }
 
+  List<_RadialMenuAction> _buildActions() {
+    if (widget.isStudent) {
+      return [
+        _RadialMenuAction(
+          angle: 120,
+          distance: 130.h,
+          icon: PhosphorIcons.exam_fill,
+          label: 'Boletim',
+          color: const Color(0xFF00A859),
+          iconColor: Colors.white,
+          onTap: widget.onStudentAction1 ?? () {},
+          isBig: true,
+        ),
+        _RadialMenuAction(
+          angle: 60,
+          distance: 130.h,
+          icon: PhosphorIcons.megaphone_fill,
+          label: 'Mural de\nAvisos',
+          color: Colors.white,
+          iconColor: Colors.blueAccent,
+          onTap: widget.onStudentAction2 ?? () {},
+          isBig: true,
+        ),
+      ];
+    }
+
+    if (widget.isProfessor) {
+      return [
+        _RadialMenuAction(
+          angle: 150,
+          distance: 128.h,
+          icon: PhosphorIcons.check_circle_fill,
+          label: 'Realizar\nChamada',
+          color: const Color(0xFF00A859),
+          iconColor: Colors.white,
+          onTap: widget.onNavigateToAttendance,
+          isBig: true,
+        ),
+        _RadialMenuAction(
+          angle: 115,
+          distance: 142.h,
+          icon: PhosphorIcons.file_text_fill,
+          label: 'Boletins',
+          color: const Color(0xFF2F80ED),
+          iconColor: Colors.white,
+          onTap: widget.onNavigateToReportCards ?? () {},
+          isBig: true,
+        ),
+        _RadialMenuAction(
+          angle: 75,
+          distance: 142.h,
+          icon: PhosphorIcons.scan_bold,
+          label: 'Corrigir\nProvas',
+          color: Colors.black,
+          iconColor: Colors.amber,
+          onTap: widget.onNavigateToScanner ?? () {},
+          isBig: true,
+        ),
+        _RadialMenuAction(
+          angle: 35,
+          distance: 128.h,
+          icon: PhosphorIcons.identification_card_fill,
+          label: 'Meus\nDados',
+          color: Colors.white,
+          iconColor: Colors.blueAccent,
+          onTap: widget.onNavigateToStaff,
+          isBig: true,
+        ),
+      ];
+    }
+
+    return [
+      _RadialMenuAction(
+        angle: 120,
+        distance: 130.h,
+        icon: PhosphorIcons.check_circle_fill,
+        label: 'Realizar\nChamada',
+        color: const Color(0xFF00A859),
+        iconColor: Colors.white,
+        onTap: widget.onNavigateToAttendance,
+        isBig: true,
+      ),
+      _RadialMenuAction(
+        angle: 60,
+        distance: 130.h,
+        icon: PhosphorIcons.identification_card_fill,
+        label: 'Gestão de\nEquipe',
+        color: Colors.white,
+        iconColor: Colors.blueAccent,
+        onTap: widget.onNavigateToStaff,
+        isBig: true,
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -96,13 +198,14 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
     final double centerX = screenSize.width / 2;
     final double anchorBottom = fabBottomMargin + (fabSize / 2);
 
+    final actions = _buildActions();
+
     return SizedBox(
       width: screenSize.width,
       height: screenSize.height,
       child: Stack(
         alignment: Alignment.bottomCenter,
         children: [
-          // --- 1. OVERLAY ---
           Positioned.fill(
             child: IgnorePointer(
               ignoring: !_isOpen,
@@ -125,65 +228,20 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
               ),
             ),
           ),
-
-          // --- 2. BOTÕES DO MENU RADIAL ---
-
-          // Botão Esquerdo (Chamada vs Boletim)
-          _buildPhysicalNavigationButton(
-            centerX: centerX,
-            anchorBottom: anchorBottom,
-            // Se for professor, abre mais o leque (140) para caber 3 botões. Se for aluno, mantém 120.
-            angle: widget.isProfessor ? 140 : 120,
-            distance: 130.h,
-            icon: widget.isStudent
-                ? PhosphorIcons.exam_fill
-                : PhosphorIcons.check_circle_fill,
-            label: widget.isStudent ? "Boletim" : "Realizar\nChamada",
-            color: const Color(0xFF00A859),
-            iconColor: Colors.white,
-            onTap: widget.isStudent
-                ? (widget.onStudentAction1 ?? () {})
-                : widget.onNavigateToAttendance,
-            isBig: true,
-          ),
-
-          // [NOVO] Botão Central (Corrigir Provas) - APARECE APENAS PARA PROFESSORES
-          if (widget.isProfessor)
-            _buildPhysicalNavigationButton(
+          ...actions.map(
+            (action) => _buildPhysicalNavigationButton(
               centerX: centerX,
               anchorBottom: anchorBottom,
-              angle: 90, // Exatamente no topo/meio
-              distance: 135.h, // Levemente mais alto para destaque
-              icon: PhosphorIcons.scan_bold, // Ícone de Escanear/Câmera
-              label: "Corrigir\nProvas",
-              color: Colors.black, // Estilo Academy Hub Premium
-              iconColor: Colors.amber,
-              onTap: widget.onNavigateToScanner ?? () {},
-              isBig: true,
+              angle: action.angle,
+              distance: action.distance,
+              icon: action.icon,
+              label: action.label,
+              color: action.color,
+              iconColor: action.iconColor,
+              onTap: action.onTap,
+              isBig: action.isBig,
             ),
-
-          // Botão Direito (Gestão vs Comunicados)
-          _buildPhysicalNavigationButton(
-            centerX: centerX,
-            anchorBottom: anchorBottom,
-            // Se for professor, abre mais o leque (40) para caber 3 botões. Se for aluno, mantém 60.
-            angle: widget.isProfessor ? 40 : 60,
-            distance: 130.h,
-            icon: widget.isStudent
-                ? PhosphorIcons.megaphone_fill
-                : PhosphorIcons.identification_card_fill,
-            label: widget.isStudent
-                ? "Mural de\nAvisos"
-                : (widget.isProfessor ? "Meus\nDados" : "Gestão de\nEquipe"),
-            color: Colors.white,
-            iconColor: Colors.blueAccent,
-            onTap: widget.isStudent
-                ? (widget.onStudentAction2 ?? () {})
-                : widget.onNavigateToStaff,
-            isBig: true,
           ),
-
-          // --- 3. BARRA DE NAVEGAÇÃO ---
           Positioned(
             bottom: 0,
             left: 0,
@@ -207,46 +265,47 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  // Tab 0: Início
-                  _buildTabItem(0, PhosphorIcons.house_fill, "Início", isDark),
-
-                  // Tab 1: Alunos (Professor) vs Participantes (Staff) vs Provas (Aluno)
                   _buildTabItem(
-                      1,
-                      widget.isStudent
-                          ? PhosphorIcons.book_open_fill
-                          : (widget.isProfessor
-                              ? PhosphorIcons.student_fill
-                              : PhosphorIcons.users_three_fill),
-                      widget.isStudent
-                          ? "Provas"
-                          : (widget.isProfessor ? "Alunos" : "Participantes"),
-                      isDark),
-
-                  // Espaço para o botão verde no meio
+                    0,
+                    PhosphorIcons.house_fill,
+                    'Início',
+                    isDark,
+                  ),
+                  _buildTabItem(
+                    1,
+                    widget.isStudent
+                        ? PhosphorIcons.book_open_fill
+                        : (widget.isProfessor
+                            ? PhosphorIcons.student_fill
+                            : PhosphorIcons.users_three_fill),
+                    widget.isStudent
+                        ? 'Provas'
+                        : (widget.isProfessor ? 'Alunos' : 'Participantes'),
+                    isDark,
+                  ),
                   SizedBox(width: 60.w),
-
-                  // Tab 2: Turmas (Professor) vs Financeiro (Staff) vs Mensalidades (Aluno)
                   _buildTabItem(
-                      2,
-                      widget.isStudent
-                          ? PhosphorIcons.receipt_fill
-                          : (widget.isProfessor
-                              ? PhosphorIcons.chalkboard_teacher_fill
-                              : PhosphorIcons.money_fill),
-                      widget.isStudent
-                          ? "Mensalidades"
-                          : (widget.isProfessor ? "Turmas" : "Financeiro"),
-                      isDark),
-
-                  // Tab 3: Mais
-                  _buildTabItem(3, PhosphorIcons.gear_fill, "Mais", isDark),
+                    2,
+                    widget.isStudent
+                        ? PhosphorIcons.receipt_fill
+                        : (widget.isProfessor
+                            ? PhosphorIcons.chalkboard_teacher_fill
+                            : PhosphorIcons.money_fill),
+                    widget.isStudent
+                        ? 'Mensalidades'
+                        : (widget.isProfessor ? 'Turmas' : 'Financeiro'),
+                    isDark,
+                  ),
+                  _buildTabItem(
+                    3,
+                    PhosphorIcons.gear_fill,
+                    'Mais',
+                    isDark,
+                  ),
                 ],
               ),
             ),
           ),
-
-          // --- 4. FAB CENTRAL ---
           Positioned(
             bottom: fabBottomMargin,
             child: GestureDetector(
@@ -264,7 +323,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                         color: kPrimaryGreen.withOpacity(0.4),
                         blurRadius: 10,
                         offset: const Offset(0, 4),
-                      )
+                      ),
                     ],
                   ),
                   child: Icon(
@@ -285,6 +344,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
 
   Widget _buildTabItem(int index, IconData icon, String label, bool isDark) {
     final isSelected = widget.currentIndex == index;
+
     return IgnorePointer(
       ignoring: _isOpen,
       child: GestureDetector(
@@ -310,7 +370,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                     ? const Color(0xFF00A859)
                     : (isDark ? Colors.grey[600] : Colors.grey[400]),
               ),
-            )
+            ),
           ],
         ),
       ),
@@ -329,7 +389,6 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
     required VoidCallback onTap,
     bool isBig = false,
   }) {
-    // A mágica da Trigonometria para posicionar no arco perfeito
     final double rad = angle * (math.pi / 180);
     final double buttonSize = isBig ? 65.w : 55.w;
 
@@ -372,11 +431,14 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                             color: Colors.black.withOpacity(0.2),
                             blurRadius: 8,
                             offset: const Offset(0, 4),
-                          )
+                          ),
                         ],
                       ),
-                      child: Icon(icon,
-                          color: iconColor, size: isBig ? 30.sp : 24.sp),
+                      child: Icon(
+                        icon,
+                        color: iconColor,
+                        size: isBig ? 30.sp : 24.sp,
+                      ),
                     ),
                   ),
                   SizedBox(height: 8.h),
@@ -391,12 +453,13 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                         fontWeight: FontWeight.w700,
                         shadows: [
                           Shadow(
-                              color: Colors.black.withOpacity(0.8),
-                              blurRadius: 4)
+                            color: Colors.black.withOpacity(0.8),
+                            blurRadius: 4,
+                          ),
                         ],
                       ),
                     ),
-                  )
+                  ),
                 ],
               ),
             ),
@@ -405,4 +468,26 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
       },
     );
   }
+}
+
+class _RadialMenuAction {
+  final double angle;
+  final double distance;
+  final IconData icon;
+  final String label;
+  final Color color;
+  final Color iconColor;
+  final VoidCallback onTap;
+  final bool isBig;
+
+  const _RadialMenuAction({
+    required this.angle,
+    required this.distance,
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.iconColor,
+    required this.onTap,
+    this.isBig = false,
+  });
 }

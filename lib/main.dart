@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/config/app_theme.dart';
 import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
 import 'package:academyhub_mobile/providers/assessment_provider.dart';
@@ -9,6 +10,7 @@ import 'package:academyhub_mobile/providers/dashboard_provider.dart';
 import 'package:academyhub_mobile/providers/expense_provider.dart';
 import 'package:academyhub_mobile/providers/financial_automation_provider.dart';
 import 'package:academyhub_mobile/providers/invoice_provider.dart';
+import 'package:academyhub_mobile/providers/report_card_provider.dart';
 
 import 'package:academyhub_mobile/providers/schedule_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
@@ -20,6 +22,7 @@ import 'package:academyhub_mobile/providers/whatsapp_provider.dart';
 import 'package:academyhub_mobile/screens/negotiation.data.dart';
 import 'package:academyhub_mobile/screens/public_registration_screen.dart';
 import 'package:academyhub_mobile/screens/student/student_invoices_screen.dart';
+import 'package:academyhub_mobile/services/report_card_service.dart';
 import 'package:academyhub_mobile/services/websocket.dart';
 import 'package:academyhub_mobile/student_access/student_exam_execution_screen.dart';
 import 'package:academyhub_mobile/student_access/student_exam_login_screen.dart';
@@ -83,6 +86,13 @@ void main() {
       runApp(
         MultiProvider(
           providers: [
+            ChangeNotifierProvider(
+              create: (_) => ReportCardProvider(
+                service: ReportCardService(
+                  baseUrl: ApiConfig.baseUrl,
+                ),
+              ),
+            ),
             ChangeNotifierProvider(create: (_) => ThemeProvider()),
             ChangeNotifierProvider(create: (_) => ExpenseProvider()),
             ChangeNotifierProvider(create: (_) => AttendanceProvider()),
