@@ -14,7 +14,8 @@ import '../../providers/academic_calendar_provider.dart';
 import '../../model/term_model.dart';
 import '../../model/horario_model.dart';
 
-typedef ClassSelectedCallback = void Function(String classId, String className);
+typedef ClassSelectedCallback = dynamic Function(
+    String classId, String className);
 
 class ClassSelectionScreen extends StatefulWidget {
   final VoidCallback? onBack;
@@ -59,7 +60,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     super.dispose();
   }
 
-  // Helpers de Data para o Bimestre
   bool _sameDay(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
@@ -149,7 +149,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final user = authProvider.user;
 
-    // [AJUSTADO] Lendo os roles corretamente da classe User
     bool isGestor = false;
     if (user != null) {
       final lowerRoles = user.roles.map((r) => r.toLowerCase()).toList();
@@ -190,7 +189,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
   ) {
     if (user == null) return [];
 
-    // [AJUSTADO] Verificação correta usando a lista de roles
     bool isGestor = false;
     try {
       final roles = (user.roles as List<dynamic>)
@@ -207,7 +205,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     }
 
     try {
-      // [AJUSTADO] Garantindo pegar o id do usuário real
       final userId = user.id?.toString() ?? '';
       if (userId.isNotEmpty) {
         final turmasDoProfessor = horariosDoBimestre
@@ -234,7 +231,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     final user = authProvider.user;
     final String userId = user?.id ?? '';
 
-    // [AJUSTADO] Identifica corretamente o gestor para a tela
     bool isGestor = false;
     if (user != null) {
       final lowerRoles = user.roles.map((r) => r.toLowerCase()).toList();
@@ -262,7 +258,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
 
     final currentWeekday = DateTime.now().weekday;
 
-    // Ordenação Inteligente atualizada para olhar para O PROFESSOR específico
     availableClasses.sort((a, b) {
       final temAulaA = horariosDoBimestre.any((h) =>
           h.classId == a.id &&
@@ -311,93 +306,100 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
           },
         ),
       ),
-      body: isLoading
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+      body: SafeArea(
+        child: isLoading
+            ? Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(),
+                    SizedBox(height: 16.h),
+                    Text("Carregando grade do bimestre...",
+                        style: GoogleFonts.inter(color: Colors.grey))
+                  ],
+                ),
+              )
+            : Column(
                 children: [
-                  const CircularProgressIndicator(),
-                  SizedBox(height: 16.h),
-                  Text("Carregando grade do bimestre...",
-                      style: GoogleFonts.inter(color: Colors.grey))
-                ],
-              ),
-            )
-          : Column(
-              children: [
-                Padding(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
-                  child: Container(
-                    height: 48.h,
-                    padding: EdgeInsets.symmetric(horizontal: 16.w),
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF1D2024) : Colors.white,
-                      borderRadius: BorderRadius.circular(14.r),
-                      border: Border.all(
-                          color: isDark
-                              ? const Color(0xFF2A2E34)
-                              : const Color(0xFFE7EBF2)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(PhosphorIcons.magnifying_glass,
-                            color: Colors.grey, size: 20.sp),
-                        SizedBox(width: 10.w),
-                        Expanded(
-                          child: TextField(
-                            controller: _searchController,
-                            decoration: InputDecoration(
-                              hintText: "Buscar turma...",
-                              border: InputBorder.none,
-                              hintStyle: GoogleFonts.inter(
-                                  color: Colors.grey, fontSize: 14.sp),
+                  Padding(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
+                    child: Container(
+                      height: 48.h,
+                      padding: EdgeInsets.symmetric(horizontal: 16.w),
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1D2024) : Colors.white,
+                        borderRadius: BorderRadius.circular(14.r),
+                        border: Border.all(
+                            color: isDark
+                                ? const Color(0xFF2A2E34)
+                                : const Color(0xFFE7EBF2)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(PhosphorIcons.magnifying_glass,
+                              color: Colors.grey, size: 20.sp),
+                          SizedBox(width: 10.w),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchController,
+                              decoration: InputDecoration(
+                                hintText: "Buscar turma...",
+                                border: InputBorder.none,
+                                hintStyle: GoogleFonts.inter(
+                                    color: Colors.grey, fontSize: 14.sp),
+                              ),
+                              style: GoogleFonts.inter(fontSize: 14.sp),
                             ),
-                            style: GoogleFonts.inter(fontSize: 14.sp),
                           ),
-                        ),
-                        if (_searchQuery.isNotEmpty)
-                          InkWell(
-                            onTap: () {
-                              _searchController.clear();
-                              FocusScope.of(context).unfocus();
-                            },
-                            child: Icon(PhosphorIcons.x_circle_fill,
-                                color: Colors.grey, size: 20.sp),
-                          ),
-                      ],
+                          if (_searchQuery.isNotEmpty)
+                            InkWell(
+                              onTap: () {
+                                _searchController.clear();
+                                FocusScope.of(context).unfocus();
+                              },
+                              child: Icon(PhosphorIcons.x_circle_fill,
+                                  color: Colors.grey, size: 20.sp),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                Expanded(
-                  child: availableClasses.isEmpty
-                      ? Center(
-                          child: Text(
-                            "Nenhuma turma encontrada no bimestre.",
-                            style: GoogleFonts.inter(color: Colors.grey),
+                  Expanded(
+                    child: availableClasses.isEmpty
+                        ? Center(
+                            child: Text(
+                              "Nenhuma turma encontrada no bimestre.",
+                              style: GoogleFonts.inter(color: Colors.grey),
+                            ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: _loadDataAndCheckAttendance,
+                            color: const Color(0xFF2DBE60),
+                            child: ListView.builder(
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              padding: EdgeInsets.only(
+                                  left: 16.w,
+                                  right: 16.w,
+                                  top: 16.h,
+                                  bottom: 120.h),
+                              itemCount: availableClasses.length,
+                              itemBuilder: (context, index) {
+                                return _buildClassCard(
+                                    context,
+                                    availableClasses[index],
+                                    horariosDoBimestre,
+                                    currentWeekday,
+                                    isDark,
+                                    isGestor,
+                                    userId);
+                              },
+                            ),
                           ),
-                        )
-                      : ListView.builder(
-                          padding: EdgeInsets.only(
-                              left: 16.w,
-                              right: 16.w,
-                              top: 16.h,
-                              bottom: 120.h),
-                          itemCount: availableClasses.length,
-                          itemBuilder: (context, index) {
-                            return _buildClassCard(
-                                context,
-                                availableClasses[index],
-                                horariosDoBimestre,
-                                currentWeekday,
-                                isDark,
-                                isGestor,
-                                userId);
-                          },
-                        ),
-                ),
-              ],
-            ),
+                  ),
+                ],
+              ),
+      ),
     );
   }
 
@@ -522,7 +524,14 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
             if (confirm != true) return;
           }
 
-          widget.onClassSelected(turma.id!, turma.name);
+          final dynamic result = widget.onClassSelected(turma.id!, turma.name);
+          if (result is Future) {
+            await result;
+          }
+
+          if (mounted) {
+            await _loadDataAndCheckAttendance();
+          }
         },
         child: Padding(
           padding: EdgeInsets.all(16.w),
@@ -544,6 +553,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
               SizedBox(width: 14.w),
               Expanded(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
@@ -586,6 +596,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
                 ),
               ),
               Column(
+                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(

@@ -121,23 +121,34 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
       final terms = await _termService.find(token, {});
       final now = DateTime.now();
 
-      final term = terms.firstWhereOrNull((t) =>
-          t.tipo == 'Letivo' &&
+      TermModel? term = terms.firstWhereOrNull((t) =>
           (now.isAfter(t.startDate) || _isSameDay(now, t.startDate)) &&
           (now.isBefore(t.endDate) || _isSameDay(now, t.endDate)));
+
+      term ??= terms.isNotEmpty ? terms.first : null;
 
       if (term != null) {
         _currentTerm = term;
 
-        final horarios = await _horarioService.getHorarios(
-          token,
-          filter: {
-            'teacherId': user.id,
-            'termId': term.id,
-          },
-        );
+        final allHorarios = await _horarioService.getHorarios(token);
 
-        _allTeacherClasses = horarios;
+        bool isGestor = false;
+        try {
+          final roles = (user.roles as List<dynamic>)
+              .map((e) => e.toString().toLowerCase())
+              .toList();
+          isGestor = roles.contains('admin') ||
+              roles.contains('diretor') ||
+              roles.contains('coordenador') ||
+              roles.contains('administrador');
+        } catch (_) {}
+
+        _allTeacherClasses = allHorarios.where((h) {
+          final termMatch = h.termId == term!.id;
+          final teacherMatch = isGestor || h.teacherId == user.id;
+          return termMatch && teacherMatch;
+        }).toList();
+
         _processScheduleLogic();
       } else {
         _loadingMessage = "Nenhum período letivo ativo.";

@@ -6,6 +6,8 @@ import 'package:academyhub_mobile/model/exam_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
 import 'package:academyhub_mobile/services/exam_service.dart';
+// 👇 Import do pop-up inteligente!
+import 'package:academyhub_mobile/widgets/scanner_operation_dialog.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -87,14 +89,12 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   List<CameraDescription>? _cameras;
 
   ScannerState _currentState = ScannerState.scanningQR;
-  String _processingStatus = "";
 
   String? _scannedQrCodeUuid;
   Map<String, dynamic>? _scannedSheetData;
 
   final Color _primaryThemeColor = const Color(0xFFC8A2C8);
 
-  bool _isLoadingDialogOpen = false;
   bool _isCapturingPhoto = false;
   Uint8List? _webPickedPreviewBytes;
 
@@ -166,70 +166,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     super.dispose();
   }
 
-  void _showLoadingDialog(String message) {
-    if (!mounted) return;
-
-    _processingStatus = message;
-
-    if (_isLoadingDialogOpen) {
-      setState(() {});
-      return;
-    }
-
-    _isLoadingDialogOpen = true;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          content: Center(
-            child: Container(
-              padding: EdgeInsets.all(20.w),
-              decoration: BoxDecoration(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? const Color(0xFF1E1E1E)
-                    : Colors.white,
-                borderRadius: BorderRadius.circular(16.r),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(color: _primaryThemeColor),
-                  SizedBox(height: 20.h),
-                  StatefulBuilder(
-                    builder: (_, setInnerState) {
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (mounted && _isLoadingDialogOpen) {
-                          setInnerState(() {});
-                        }
-                      });
-                      return Text(
-                        _processingStatus,
-                        style: GoogleFonts.inter(fontWeight: FontWeight.bold),
-                        textAlign: TextAlign.center,
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    ).then((_) {
-      _isLoadingDialogOpen = false;
-    });
-  }
-
-  void _hideLoadingDialog() {
-    if (!mounted || !_isLoadingDialogOpen) return;
-    Navigator.of(context, rootNavigator: true).pop();
-  }
-
+  // 👇 LÓGICA ATUALIZADA DO QR CODE COM O NOVO POP-UP
   void _onDetect(BarcodeCapture capture) async {
     if (_currentState != ScannerState.scanningQR) return;
 
@@ -240,226 +177,215 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     if (qrCodeUuid == null || qrCodeUuid.isEmpty) return;
 
     setState(() => _currentState = ScannerState.processing);
-
     await _scannerController.stop();
 
     if (!mounted) return;
+    final token = Provider.of<AuthProvider>(context, listen: false).token;
 
-    try {
-      final token = Provider.of<AuthProvider>(context, listen: false).token;
+    final sheetData = await showScannerOperationDialog<Map<String, dynamic>>(
+      context: context,
+      loadingTitle: 'Identificando...',
+      loadingMessage: 'Buscando informações do aluno.',
+      loadingDetail: 'Sincronizando com a nuvem...',
+      successTitle: 'Aluno Encontrado!',
+      successMessage: 'Preparando a câmera de correção.',
+      successVisibleDuration: const Duration(milliseconds: 900),
+      operation: () async {
+        final data = await ExamApiService()
+            .verifySheetData(qrCodeUuid: qrCodeUuid, token: token!);
+        if (!kIsWeb) await _initPhotoCamera();
+        return data;
+      },
+    );
 
-      _showLoadingDialog("Buscando dados...");
-      final sheetData = await ExamApiService()
-          .verifySheetData(qrCodeUuid: qrCodeUuid, token: token!);
-
-      if (!kIsWeb) {
-        _processingStatus = "Preparando câmera...";
-        await _initPhotoCamera();
-      }
-
-      _hideLoadingDialog();
-
-      setState(() {
-        _scannedQrCodeUuid = qrCodeUuid;
-        _scannedSheetData = sheetData;
-        _currentState = ScannerState.takingPhoto;
-      });
-    } catch (e) {
-      _hideLoadingDialog();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
-        );
-        await _resetToQrMode();
-      }
+    if (sheetData == null) {
+      // Usuário cancelou ou deu erro
+      await _resetToQrMode();
+      return;
     }
+
+    setState(() {
+      _scannedQrCodeUuid = qrCodeUuid;
+      _scannedSheetData = sheetData;
+      _currentState = ScannerState.takingPhoto;
+    });
   }
 
+  // 👇 LÓGICA ATUALIZADA DO ENVIO DA FOTO COM O NOVO POP-UP
   Future<void> _takePhotoAndSendToAI() async {
     if (_isCapturingPhoto) return;
 
     _isCapturingPhoto = true;
     setState(() => _currentState = ScannerState.processing);
 
-    try {
-      Uint8List fullImageBytes;
+    Uint8List fullImageBytes;
 
-      if (_isWebCameraFlow) {
-        final XFile? pickedFile = await _imagePicker.pickImage(
-          source: ImageSource.camera,
-          preferredCameraDevice: CameraDevice.rear,
-          imageQuality: 92,
-        );
-
-        if (pickedFile == null) {
-          setState(() => _currentState = ScannerState.takingPhoto);
-          _isCapturingPhoto = false;
-          return;
-        }
-
-        fullImageBytes = await pickedFile.readAsBytes();
-        _webPickedPreviewBytes = fullImageBytes;
-      } else {
-        if (_cameraController == null ||
-            !_cameraController!.value.isInitialized) {
-          throw Exception('Câmera não inicializada.');
-        }
-
-        final XFile photo = await _cameraController!.takePicture();
-        fullImageBytes = await photo.readAsBytes();
-      }
-
-      _showLoadingDialog("Recortando imagem...");
-
-      final screenSize = MediaQuery.of(context).size;
-      final isBubbleSheet =
-          _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
-
-      final boxW =
-          isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
-      final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
-
-      final Uint8List croppedBytes = await compute(processImageCrop, {
-        'bytes': fullImageBytes,
-        'screenW': screenSize.width,
-        'screenH': screenSize.height,
-        'boxW': boxW,
-        'boxH': boxH,
-      });
-
-      _hideLoadingDialog();
-      _showLoadingDialog("Analisando gabarito com IA...");
-
-      final token = Provider.of<AuthProvider>(context, listen: false).token;
-
-      final aiResult = await ExamApiService().processOmrImage(
-        imageBytes: croppedBytes,
-        token: token!,
-        correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
-        examId: _scannedSheetData?['examId'],
+    if (_isWebCameraFlow) {
+      final XFile? pickedFile = await _imagePicker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.rear,
+        imageQuality: 92,
       );
 
-      _hideLoadingDialog();
-
-      if (mounted) {
-        final rawGrade = aiResult['grade'];
-        double? detectedGrade;
-        if (rawGrade != null) {
-          detectedGrade = (rawGrade as num).toDouble();
-        }
-
-        List<dynamic>? details;
-        if (aiResult['correctionDetails'] != null) {
-          details = aiResult['correctionDetails'] as List<dynamic>;
-        }
-
-        await _showGradeConfirmationModal(
-          _scannedQrCodeUuid!,
-          _scannedSheetData!,
-          autoDetectedGrade: detectedGrade,
-          correctionDetails: details,
-        );
-      }
-    } catch (e) {
-      _hideLoadingDialog();
-
-      if (mounted) {
-        final cleanError = e.toString().replaceAll('Exception: ', '');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(cleanError), backgroundColor: Colors.red),
-        );
-
+      if (pickedFile == null) {
         setState(() => _currentState = ScannerState.takingPhoto);
+        _isCapturingPhoto = false;
+        return;
       }
-    } finally {
-      _isCapturingPhoto = false;
+      fullImageBytes = await pickedFile.readAsBytes();
+      _webPickedPreviewBytes = fullImageBytes;
+    } else {
+      if (_cameraController == null ||
+          !_cameraController!.value.isInitialized) {
+        _isCapturingPhoto = false;
+        setState(() => _currentState = ScannerState.takingPhoto);
+        return;
+      }
+      final XFile photo = await _cameraController!.takePicture();
+      fullImageBytes = await photo.readAsBytes();
+    }
+
+    final screenSize = MediaQuery.of(context).size;
+    final isBubbleSheet =
+        _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
+    final boxW =
+        isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
+    final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
+    final token = Provider.of<AuthProvider>(context, listen: false).token;
+
+    final studentName = _scannedSheetData?['studentName']?.toUpperCase() ??
+        'ALUNO DESCONHECIDO';
+
+    final aiResult = await showScannerOperationDialog<Map<String, dynamic>>(
+      context: context,
+      loadingTitle: 'Analisando Prova',
+      loadingMessage: 'A Inteligência Artificial está calculando a nota...',
+      loadingDetail: 'Aluno(a): $studentName',
+      successTitle: 'Correção Concluída!',
+      successMessage: 'O resultado está pronto para validação.',
+      operation: () async {
+        // 1. Recorta a imagem
+        final Uint8List croppedBytes = await compute(processImageCrop, {
+          'bytes': fullImageBytes,
+          'screenW': screenSize.width,
+          'screenH': screenSize.height,
+          'boxW': boxW,
+          'boxH': boxH,
+        });
+
+        // 2. Envia para a IA
+        return await ExamApiService().processOmrImage(
+          imageBytes: croppedBytes,
+          token: token!,
+          correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
+          examId: _scannedSheetData?['examId'],
+        );
+      },
+    );
+
+    _isCapturingPhoto = false;
+
+    if (aiResult != null && mounted) {
+      final rawGrade = aiResult['grade'];
+      double? detectedGrade;
+      if (rawGrade != null) {
+        detectedGrade = (rawGrade as num).toDouble();
+      }
+
+      List<dynamic>? details;
+      if (aiResult['correctionDetails'] != null) {
+        details = aiResult['correctionDetails'] as List<dynamic>;
+      }
+
+      await _showGradeConfirmationModal(
+        _scannedQrCodeUuid!,
+        _scannedSheetData!,
+        autoDetectedGrade: detectedGrade,
+        correctionDetails: details,
+      );
+    } else {
+      if (mounted) setState(() => _currentState = ScannerState.takingPhoto);
     }
   }
 
+  // 👇 LÓGICA ATUALIZADA DA GALERIA COM O NOVO POP-UP
   Future<void> _pickPhotoFromGalleryFallback() async {
     if (_isCapturingPhoto) return;
 
     _isCapturingPhoto = true;
     setState(() => _currentState = ScannerState.processing);
 
-    try {
-      final XFile? pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 92,
-      );
+    final XFile? pickedFile = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 92,
+    );
 
-      if (pickedFile == null) {
-        setState(() => _currentState = ScannerState.takingPhoto);
-        return;
-      }
-
-      final Uint8List fullImageBytes = await pickedFile.readAsBytes();
-      _webPickedPreviewBytes = fullImageBytes;
-
-      _showLoadingDialog("Recortando imagem...");
-
-      final screenSize = MediaQuery.of(context).size;
-      final isBubbleSheet =
-          _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
-
-      final boxW =
-          isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
-      final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
-
-      final Uint8List croppedBytes = await compute(processImageCrop, {
-        'bytes': fullImageBytes,
-        'screenW': screenSize.width,
-        'screenH': screenSize.height,
-        'boxW': boxW,
-        'boxH': boxH,
-      });
-
-      _hideLoadingDialog();
-      _showLoadingDialog("Analisando gabarito com IA...");
-
-      final token = Provider.of<AuthProvider>(context, listen: false).token;
-
-      final aiResult = await ExamApiService().processOmrImage(
-        imageBytes: croppedBytes,
-        token: token!,
-        correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
-        examId: _scannedSheetData?['examId'],
-      );
-
-      _hideLoadingDialog();
-
-      if (mounted) {
-        final rawGrade = aiResult['grade'];
-        double? detectedGrade;
-        if (rawGrade != null) {
-          detectedGrade = (rawGrade as num).toDouble();
-        }
-
-        List<dynamic>? details;
-        if (aiResult['correctionDetails'] != null) {
-          details = aiResult['correctionDetails'] as List<dynamic>;
-        }
-
-        await _showGradeConfirmationModal(
-          _scannedQrCodeUuid!,
-          _scannedSheetData!,
-          autoDetectedGrade: detectedGrade,
-          correctionDetails: details,
-        );
-      }
-    } catch (e) {
-      _hideLoadingDialog();
-
-      if (mounted) {
-        final cleanError = e.toString().replaceAll('Exception: ', '');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(cleanError), backgroundColor: Colors.red),
-        );
-        setState(() => _currentState = ScannerState.takingPhoto);
-      }
-    } finally {
+    if (pickedFile == null) {
+      setState(() => _currentState = ScannerState.takingPhoto);
       _isCapturingPhoto = false;
+      return;
+    }
+
+    final Uint8List fullImageBytes = await pickedFile.readAsBytes();
+    _webPickedPreviewBytes = fullImageBytes;
+
+    final screenSize = MediaQuery.of(context).size;
+    final isBubbleSheet =
+        _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
+    final boxW =
+        isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
+    final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
+    final token = Provider.of<AuthProvider>(context, listen: false).token;
+    final studentName = _scannedSheetData?['studentName']?.toUpperCase() ??
+        'ALUNO DESCONHECIDO';
+
+    final aiResult = await showScannerOperationDialog<Map<String, dynamic>>(
+      context: context,
+      loadingTitle: 'Analisando Prova',
+      loadingMessage: 'A Inteligência Artificial está calculando a nota...',
+      loadingDetail: 'Aluno(a): $studentName',
+      successTitle: 'Correção Concluída!',
+      successMessage: 'O resultado está pronto para validação.',
+      operation: () async {
+        final Uint8List croppedBytes = await compute(processImageCrop, {
+          'bytes': fullImageBytes,
+          'screenW': screenSize.width,
+          'screenH': screenSize.height,
+          'boxW': boxW,
+          'boxH': boxH,
+        });
+
+        return await ExamApiService().processOmrImage(
+          imageBytes: croppedBytes,
+          token: token!,
+          correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
+          examId: _scannedSheetData?['examId'],
+        );
+      },
+    );
+
+    _isCapturingPhoto = false;
+
+    if (aiResult != null && mounted) {
+      final rawGrade = aiResult['grade'];
+      double? detectedGrade;
+      if (rawGrade != null) {
+        detectedGrade = (rawGrade as num).toDouble();
+      }
+
+      List<dynamic>? details;
+      if (aiResult['correctionDetails'] != null) {
+        details = aiResult['correctionDetails'] as List<dynamic>;
+      }
+
+      await _showGradeConfirmationModal(
+        _scannedQrCodeUuid!,
+        _scannedSheetData!,
+        autoDetectedGrade: detectedGrade,
+        correctionDetails: details,
+      );
+    } else {
+      if (mounted) setState(() => _currentState = ScannerState.takingPhoto);
     }
   }
 
