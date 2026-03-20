@@ -69,6 +69,17 @@ class ReportCardProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clear() {
+    _isLoading = false;
+    _isGenerating = false;
+    _isSaving = false;
+    _errorMessage = null;
+    _currentReportCard = null;
+    _classReportCards = [];
+    notifyListeners();
+    debugPrint('🧹 [ReportCardProvider] Provider state cleared.');
+  }
+
   Future<List<ReportCardModel>> generateClassReportCards({
     required String token,
     required String classId,

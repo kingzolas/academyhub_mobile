@@ -1,17 +1,21 @@
 // lib/screens/dashboard/teacher_dashboard_view.dart
 
+import 'dart:math' as math;
+
 import 'package:academyhub_mobile/model/horario_model.dart';
+import 'package:academyhub_mobile/model/model_alunos.dart';
 import 'package:academyhub_mobile/model/term_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
+import 'package:academyhub_mobile/providers/student_provider.dart';
 import 'package:academyhub_mobile/services/horario_service.dart';
 import 'package:academyhub_mobile/services/term_service.dart';
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:collection/collection.dart';
 
 class TeacherDashboardView extends StatefulWidget {
   const TeacherDashboardView({super.key});
@@ -20,38 +24,98 @@ class TeacherDashboardView extends StatefulWidget {
   State<TeacherDashboardView> createState() => _TeacherDashboardViewState();
 }
 
-class _TeacherDashboardViewState extends State<TeacherDashboardView> {
+class _TeacherDashboardViewState extends State<TeacherDashboardView>
+    with TickerProviderStateMixin {
   final HorarioService _horarioService = HorarioService();
   final TermService _termService = TermService();
 
-  bool _isLoading = true;
-  String _loadingMessage = "Carregando agenda...";
+  late AnimationController _pageController;
+  late Animation<double> _fadeAnim;
+  late Animation<Offset> _slideAnim;
 
-  // Dados
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnim;
+
+  bool _isLoading = true;
+  String _loadingMessage = "Preparando seu painel...";
+
   TermModel? _currentTerm;
   List<HorarioModel> _allTeacherClasses = [];
   List<HorarioModel> _displayClasses = [];
+  List<Student> _birthdayStudents = [];
   String _timelineTitle = "Sua Agenda Hoje";
 
-  // Estado do Card Destaque
   HorarioModel? _currentClass;
   HorarioModel? _nextClass;
   bool _isClassLive = false;
 
+  int _classesTodayCount = 0;
+  int _completedTodayCount = 0;
+
+  static const Color _academyBlue = Color(0xFF1769FF);
+  static const Color _academyBlueDark = Color(0xFF0C3C91);
+  static const Color _academyGreen = Color(0xFF22C55E);
+  static const Color _academyBlack = Color(0xFF0F172A);
+  static const Color _softBlue = Color(0xFFEAF2FF);
+  static const Color _softGreen = Color(0xFFEAFBF1);
+  static const Color _softAmber = Color(0xFFFFF3E6);
+
   @override
   void initState() {
     super.initState();
+
+    _pageController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+
+    _fadeAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _pageController, curve: Curves.easeOutCubic),
+    );
+
+    _slideAnim =
+        Tween<Offset>(begin: const Offset(0, 0.08), end: Offset.zero).animate(
+      CurvedAnimation(parent: _pageController, curve: Curves.easeOutCubic),
+    );
+
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+
+    _pulseAnim = Tween<double>(begin: 0.96, end: 1.04).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchDashboardData();
     });
   }
 
+  @override
+  void dispose() {
+    _pageController.dispose();
+    _pulseController.dispose();
+    super.dispose();
+  }
+
   Future<void> _fetchDashboardData() async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
+    final studentProvider =
+        Provider.of<StudentProvider>(context, listen: false);
+
     final token = auth.token;
     final user = auth.user;
 
-    if (token == null || user == null) return;
+    if (token == null || user == null) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadingMessage = "Não foi possível identificar o usuário.";
+        });
+      }
+      return;
+    }
 
     try {
       final terms = await _termService.find(token, {});
@@ -59,27 +123,36 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
 
       final term = terms.firstWhereOrNull((t) =>
           t.tipo == 'Letivo' &&
-          (now.isAfter(t.startDate) || isSameDay(now, t.startDate)) &&
-          (now.isBefore(t.endDate) || isSameDay(now, t.endDate)));
+          (now.isAfter(t.startDate) || _isSameDay(now, t.startDate)) &&
+          (now.isBefore(t.endDate) || _isSameDay(now, t.endDate)));
 
-      if (term == null) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-            _loadingMessage = "Nenhum período letivo ativo.";
-          });
-        }
-        return;
+      if (term != null) {
+        _currentTerm = term;
+
+        final horarios = await _horarioService.getHorarios(
+          token,
+          filter: {
+            'teacherId': user.id,
+            'termId': term.id,
+          },
+        );
+
+        _allTeacherClasses = horarios;
+        _processScheduleLogic();
+      } else {
+        _loadingMessage = "Nenhum período letivo ativo.";
       }
-      _currentTerm = term;
 
-      final horarios = await _horarioService.getHorarios(token,
-          filter: {'teacherId': user.id, 'termId': term.id});
+      if (studentProvider.students.isEmpty) {
+        await studentProvider.fetchStudents(token);
+      }
 
-      _allTeacherClasses = horarios;
-      _processScheduleLogic();
+      _processBirthdays(studentProvider.students);
 
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _pageController.forward();
+      }
     } catch (e) {
       debugPrint("Erro dashboard professor: $e");
       if (mounted) {
@@ -91,15 +164,29 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
     }
   }
 
+  void _processBirthdays(List<Student> allStudents) {
+    final currentMonth = DateTime.now().month;
+
+    final bdays = allStudents.where((s) {
+      return s.birthDate.month == currentMonth;
+    }).toList();
+
+    bdays.sort((a, b) => a.birthDate.day.compareTo(b.birthDate.day));
+    _birthdayStudents = bdays;
+  }
+
   void _processScheduleLogic() {
     final now = DateTime.now();
     final todayWeekday = now.weekday;
 
-    List<HorarioModel> todays =
-        _allTeacherClasses.where((h) => h.dayOfWeek == todayWeekday).toList();
+    final todays = _allTeacherClasses
+        .where((h) => h.dayOfWeek == todayWeekday)
+        .toList()
+      ..sort((a, b) =>
+          _timeToMinutes(a.startTime).compareTo(_timeToMinutes(b.startTime)));
 
-    todays.sort((a, b) =>
-        _timeToMinutes(a.startTime).compareTo(_timeToMinutes(b.startTime)));
+    _classesTodayCount = todays.length;
+    _completedTodayCount = _calculateCompletedClasses(todays);
 
     if (todays.isNotEmpty) {
       _displayClasses = todays;
@@ -110,23 +197,33 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
     }
   }
 
+  int _calculateCompletedClasses(List<HorarioModel> todaysClasses) {
+    final nowMin = TimeOfDay.now().hour * 60 + TimeOfDay.now().minute;
+    return todaysClasses
+        .where((aula) => nowMin >= _timeToMinutes(aula.endTime))
+        .length;
+  }
+
   void _findNextDayWithClasses(int startDay) {
     for (int i = 1; i <= 7; i++) {
-      int nextDay = (startDay + i) > 7 ? (startDay + i) - 7 : (startDay + i);
-      List<HorarioModel> nextClasses =
-          _allTeacherClasses.where((h) => h.dayOfWeek == nextDay).toList();
+      final nextDay = (startDay + i) > 7 ? (startDay + i) - 7 : (startDay + i);
+
+      final nextClasses = _allTeacherClasses
+          .where((h) => h.dayOfWeek == nextDay)
+          .toList()
+        ..sort((a, b) =>
+            _timeToMinutes(a.startTime).compareTo(_timeToMinutes(b.startTime)));
 
       if (nextClasses.isNotEmpty) {
-        nextClasses.sort((a, b) =>
-            _timeToMinutes(a.startTime).compareTo(_timeToMinutes(b.startTime)));
         _displayClasses = nextClasses;
-        _timelineTitle = "Próximas Aulas (${_getWeekdayName(nextDay)})";
+        _timelineTitle = "Próximas Aulas • ${_getWeekdayName(nextDay)}";
         _currentClass = null;
         _nextClass = nextClasses.first;
         _isClassLive = false;
         return;
       }
     }
+
     _displayClasses = [];
     _timelineTitle = "Sem aulas agendadas";
   }
@@ -138,7 +235,7 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
     HorarioModel? live;
     HorarioModel? next;
 
-    for (var aula in todaysClasses) {
+    for (final aula in todaysClasses) {
       final startMin = _timeToMinutes(aula.startTime);
       final endMin = _timeToMinutes(aula.endTime);
 
@@ -151,7 +248,7 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
 
     _currentClass = live;
     _nextClass = next;
-    _isClassLive = (live != null);
+    _isClassLive = live != null;
   }
 
   int _timeToMinutes(String time) {
@@ -159,7 +256,7 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
     return int.parse(parts[0]) * 60 + int.parse(parts[1]);
   }
 
-  bool isSameDay(DateTime a, DateTime b) {
+  bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
@@ -171,177 +268,350 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
       4: 'Quinta',
       5: 'Sexta',
       6: 'Sábado',
-      7: 'Domingo'
+      7: 'Domingo',
     };
     return days[day] ?? '';
+  }
+
+  String _getFirstName(String fullName) {
+    if (fullName.trim().isEmpty) return "Professor";
+    return fullName.trim().split(' ').first;
+  }
+
+  String _capitalizeFirstLetter(String text) {
+    if (text.isEmpty) return text;
+    return text[0].toUpperCase() + text.substring(1);
+  }
+
+  String _getInitials(String fullName) {
+    final parts =
+        fullName.trim().split(' ').where((e) => e.isNotEmpty).toList();
+    if (parts.isEmpty) return "?";
+    if (parts.length == 1) return parts.first[0].toUpperCase();
+    return (parts.first[0] + parts.last[0]).toUpperCase();
+  }
+
+  int _minutesUntil(String startTime) {
+    final now = TimeOfDay.now();
+    final nowMin = now.hour * 60 + now.minute;
+    final startMin = _timeToMinutes(startTime);
+    return math.max(0, startMin - nowMin);
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final auth = Provider.of<AuthProvider>(context);
 
-    final textPrimary = isDark ? Colors.white : Colors.blueGrey[900]!;
-    final textSecondary = isDark ? Colors.grey[400]! : Colors.blueGrey[400]!;
-    // Adicionei um padding inferior extra para não ficar escondido atrás do BottomMenu/FAB
-    final paddingBottom = 100.h;
+    final textPrimary = isDark ? Colors.white : _academyBlack;
+    final textSecondary = isDark ? Colors.white70 : Colors.blueGrey[500]!;
+    final surface = isDark ? const Color(0xFF111827) : Colors.white;
+    final background =
+        isDark ? const Color(0xFF060B16) : const Color(0xFFF6F8FC);
+
+    final now = DateTime.now();
+    final formattedDate = _capitalizeFirstLetter(
+      DateFormat("EEEE, d 'de' MMMM", 'pt_BR').format(now),
+    );
+    final firstName = _getFirstName(auth.user?.fullName ?? "");
 
     return Scaffold(
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: background,
       body: _isLoading
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const CircularProgressIndicator(),
-                  SizedBox(height: 10.h),
-                  Text(_loadingMessage, style: TextStyle(color: textSecondary))
-                ],
-              ),
-            )
-          : ListView(
-              // Alterado de SingleChildScrollView para ListView para melhor controle
-              padding: EdgeInsets.only(
-                  left: 20.w, right: 20.w, top: 40.h, bottom: paddingBottom),
-              children: [
-                // --- 1. HEADER (Adaptado para Mobile) ---
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("Olá, Professor!",
-                              style: GoogleFonts.sairaCondensed(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 28.sp, // Reduzido de 32 para 28
-                                  color: textPrimary)),
-                          Text(
-                              _currentTerm != null
-                                  ? "Período: ${_currentTerm!.titulo}"
-                                  : "Academy Hub",
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.inter(
-                                  fontSize: 13.sp, color: textSecondary)),
-                        ],
-                      ),
-                    ),
-                    // Data compacta
-                    Container(
-                      padding: EdgeInsets.all(10.w),
-                      decoration: BoxDecoration(
-                        color: theme.cardColor,
-                        borderRadius: BorderRadius.circular(12.r),
-                        border: Border.all(
-                            color: theme.dividerColor.withOpacity(0.1)),
-                      ),
-                      child: Icon(PhosphorIcons.calendar_blank,
-                          size: 20.sp, color: textSecondary),
-                    )
-                  ],
-                ),
-
-                SizedBox(height: 25.h),
-
-                // --- 2. HERO CARD (Agora ocupa 100% da largura) ---
-                _buildMainStatusCard(theme, isDark),
-
-                SizedBox(height: 25.h),
-
-                // --- 3. TIMELINE (Mantive horizontal, perfeito para mobile) ---
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(_timelineTitle,
-                        style: GoogleFonts.inter(
-                            fontSize: 18.sp,
-                            fontWeight: FontWeight.bold,
-                            color: textPrimary)),
-                    // Indicador de rolagem se necessário
-                    if (_displayClasses.isNotEmpty)
-                      Icon(PhosphorIcons.caret_right,
-                          size: 16.sp, color: textSecondary)
-                  ],
-                ),
-                SizedBox(height: 15.h),
-
-                _displayClasses.isEmpty
-                    ? Container(
-                        height: 80.h,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                            "Nenhuma aula encontrada para os próximos dias.",
-                            style: TextStyle(color: textSecondary)),
-                      )
-                    : SizedBox(
-                        height: 130.h, // Ajuste fino de altura
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: _displayClasses.length,
-                          separatorBuilder: (_, __) => SizedBox(width: 12.w),
-                          itemBuilder: (context, index) {
-                            return _buildTimelineCard(
-                                _displayClasses[index], theme, isDark);
-                          },
+          ? _buildLoadingState(textSecondary)
+          : FadeTransition(
+              opacity: _fadeAnim,
+              child: SlideTransition(
+                position: _slideAnim,
+                child: CustomScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  slivers: [
+                    SliverPadding(
+                      padding: EdgeInsets.fromLTRB(18.w, 24.h, 18.w, 120.h),
+                      sliver: SliverList(
+                        delegate: SliverChildListDelegate(
+                          [
+                            _buildTopHeader(
+                              auth: auth,
+                              firstName: firstName,
+                              formattedDate: formattedDate,
+                              textPrimary: textPrimary,
+                              textSecondary: textSecondary,
+                              isDark: isDark,
+                            ),
+                            SizedBox(height: 18.h),
+                            _buildMainStatusCard(
+                                surface: surface, isDark: isDark),
+                            SizedBox(height: 18.h),
+                            _buildQuickStatsRow(
+                              surface: surface,
+                              textPrimary: textPrimary,
+                              textSecondary: textSecondary,
+                              isDark: isDark,
+                            ),
+                            SizedBox(height: 22.h),
+                            _buildSectionHeader(
+                              title: _timelineTitle,
+                              subtitle: _displayClasses.isEmpty
+                                  ? "Organização do seu dia letivo"
+                                  : "${_displayClasses.length} itens na sua visualização",
+                              icon: PhosphorIcons.calendar_blank,
+                              textPrimary: textPrimary,
+                              textSecondary: textSecondary,
+                            ),
+                            SizedBox(height: 14.h),
+                            _displayClasses.isEmpty
+                                ? _buildEmptyAgendaCard(
+                                    surface: surface,
+                                    textPrimary: textPrimary,
+                                    textSecondary: textSecondary,
+                                    isDark: isDark,
+                                  )
+                                : SizedBox(
+                                    height: 164.h,
+                                    child: ListView.separated(
+                                      physics: const BouncingScrollPhysics(),
+                                      scrollDirection: Axis.horizontal,
+                                      itemCount: _displayClasses.length,
+                                      separatorBuilder: (_, __) =>
+                                          SizedBox(width: 12.w),
+                                      itemBuilder: (context, index) {
+                                        final aula = _displayClasses[index];
+                                        return TweenAnimationBuilder<double>(
+                                          tween: Tween(begin: 0.96, end: 1),
+                                          duration: Duration(
+                                            milliseconds: 300 + (index * 80),
+                                          ),
+                                          curve: Curves.easeOut,
+                                          builder: (context, value, child) {
+                                            return Transform.scale(
+                                              scale: value,
+                                              child: child,
+                                            );
+                                          },
+                                          child: _buildTimelineCard(
+                                            aula,
+                                            surface,
+                                            isDark,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                            SizedBox(height: 22.h),
+                            _buildFocusInsightCard(
+                              surface: surface,
+                              textPrimary: textPrimary,
+                              textSecondary: textSecondary,
+                              isDark: isDark,
+                            ),
+                            SizedBox(height: 22.h),
+                            if (_birthdayStudents.isNotEmpty) ...[
+                              _buildSectionHeader(
+                                title: "Aniversariantes do Mês",
+                                subtitle:
+                                    "${_birthdayStudents.length} aluno(s) celebrando neste mês",
+                                icon: PhosphorIcons.cake_fill,
+                                textPrimary: textPrimary,
+                                textSecondary: textSecondary,
+                                iconColor: const Color(0xFFF59E0B),
+                              ),
+                              SizedBox(height: 14.h),
+                              SizedBox(
+                                height: 156.h,
+                                child: ListView.separated(
+                                  physics: const BouncingScrollPhysics(),
+                                  scrollDirection: Axis.horizontal,
+                                  itemCount: _birthdayStudents.length,
+                                  separatorBuilder: (_, __) =>
+                                      SizedBox(width: 12.w),
+                                  itemBuilder: (context, index) {
+                                    final student = _birthdayStudents[index];
+                                    return TweenAnimationBuilder<double>(
+                                      tween: Tween(begin: 0.94, end: 1),
+                                      duration: Duration(
+                                        milliseconds: 320 + (index * 70),
+                                      ),
+                                      curve: Curves.easeOut,
+                                      builder: (context, value, child) {
+                                        return Transform.scale(
+                                          scale: value,
+                                          child: child,
+                                        );
+                                      },
+                                      child: _buildBirthdayCard(
+                                        student,
+                                        surface,
+                                        isDark,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
-
-                SizedBox(height: 25.h),
-
-                // --- 4. PENDÊNCIAS (Agora em linha vertical) ---
-                // No mobile, o professor vê isso rolando para baixo
-                _buildPendingTasksCard(theme, isDark),
-
-                SizedBox(height: 25.h),
-
-                // --- 5. ACESSO RÁPIDO (Grid de 2 Colunas) ---
-                Text("Acesso Rápido",
-                    style: GoogleFonts.inter(
-                        fontSize: 18.sp,
-                        fontWeight: FontWeight.bold,
-                        color: textPrimary)),
-                SizedBox(height: 15.h),
-
-                GridView.count(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  crossAxisCount: 2, // MUDANÇA CRÍTICA: 4 -> 2 colunas
-                  crossAxisSpacing: 15.w,
-                  mainAxisSpacing: 15.h,
-                  childAspectRatio: 1.4, // Cartões mais quadrados/retangulares
-                  children: [
-                    _buildQuickAccessCard("Minhas\nTurmas",
-                        PhosphorIcons.chalkboard_teacher, Colors.blue, theme),
-                    _buildQuickAccessCard("Diário de\nNotas",
-                        PhosphorIcons.notebook, Colors.orange, theme),
-                    _buildQuickAccessCard("Meus\nAlunos", PhosphorIcons.student,
-                        Colors.green, theme),
-                    _buildQuickAccessCard("Calendário\nEscolar",
-                        PhosphorIcons.calendar, Colors.purple, theme),
+                    ),
                   ],
                 ),
-              ],
+              ),
             ),
     );
   }
 
-  // --- WIDGETS ---
+  Widget _buildLoadingState(Color textSecondary) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 54.w,
+            height: 54.w,
+            child: CircularProgressIndicator(
+              strokeWidth: 3.2,
+              valueColor: const AlwaysStoppedAnimation(_academyBlue),
+            ),
+          ),
+          SizedBox(height: 16.h),
+          Text(
+            _loadingMessage,
+            style: GoogleFonts.inter(
+              fontSize: 13.sp,
+              fontWeight: FontWeight.w500,
+              color: textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _buildMainStatusCard(ThemeData theme, bool isDark) {
+  Widget _buildTopHeader({
+    required AuthProvider auth,
+    required String firstName,
+    required String formattedDate,
+    required Color textPrimary,
+    required Color textSecondary,
+    required bool isDark,
+  }) {
+    final profileUrl = auth.user?.profilePictureUrl;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                formattedDate,
+                style: GoogleFonts.inter(
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.2,
+                  color: textSecondary,
+                ),
+              ),
+              SizedBox(height: 6.h),
+              RichText(
+                text: TextSpan(
+                  children: [
+                    TextSpan(
+                      text: "Olá, ",
+                      style: GoogleFonts.sairaCondensed(
+                        fontSize: 30.sp,
+                        height: 1,
+                        fontWeight: FontWeight.w700,
+                        color: textPrimary,
+                      ),
+                    ),
+                    TextSpan(
+                      text: "$firstName!",
+                      style: GoogleFonts.sairaCondensed(
+                        fontSize: 30.sp,
+                        height: 1,
+                        fontWeight: FontWeight.w800,
+                        color: _academyBlue,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(height: 6.h),
+              Text(
+                "Seu painel foi reorganizado para priorizar aula, ritmo e contexto do dia.",
+                style: GoogleFonts.inter(
+                  fontSize: 12.5.sp,
+                  height: 1.45,
+                  fontWeight: FontWeight.w500,
+                  color: textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(width: 14.w),
+        Container(
+          width: 58.w,
+          height: 58.w,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              colors: isDark
+                  ? [const Color(0xFF1E3A8A), const Color(0xFF2563EB)]
+                  : [const Color(0xFFDBEAFE), const Color(0xFFBFDBFE)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _academyBlue.withOpacity(0.18),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          padding: EdgeInsets.all(2.5.sp),
+          child: CircleAvatar(
+            backgroundColor: Colors.white,
+            backgroundImage: (profileUrl != null && profileUrl.isNotEmpty)
+                ? NetworkImage(profileUrl)
+                : null,
+            child: (profileUrl == null || profileUrl.isEmpty)
+                ? Text(
+                    _getInitials(auth.user?.fullName ?? ""),
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18.sp,
+                      color: _academyBlueDark,
+                    ),
+                  )
+                : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMainStatusCard({
+    required Color surface,
+    required bool isDark,
+  }) {
     if (_isClassLive && _currentClass != null) {
       return _buildHeroCard(
         classInfo: _currentClass!,
-        statusLabel: "EM ANDAMENTO",
-        statusColor: Colors.greenAccent,
-        gradientColors: isDark
-            ? [const Color(0xFF0052D4), const Color(0xFF4364F7)]
-            : [
-                const Color(0xFF2563EB),
-                const Color(0xFF60A5FA)
-              ], // Azul Royal Eyecode
-        buttonText: "Frequência", // Texto curto
-        icon: PhosphorIcons.broadcast,
+        statusLabel: "AULA EM ANDAMENTO",
+        statusColor: _academyGreen,
+        gradientColors: const [
+          Color(0xFF0E4FD3),
+          Color(0xFF1769FF),
+          Color(0xFF22C55E),
+        ],
+        buttonText: "Registrar frequência",
+        icon: PhosphorIcons.broadcast_fill,
+        isDark: isDark,
+        isLive: true,
       );
     }
 
@@ -349,52 +619,72 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
       return _buildHeroCard(
         classInfo: _nextClass!,
         statusLabel: "PRÓXIMA AULA",
-        statusColor: Colors.amberAccent,
-        gradientColors: isDark
-            ? [const Color(0xFF3E5151), const Color(0xFFDECBA4)]
-            : [const Color(0xFFF59E0B), const Color(0xFFFCD34D)],
-        buttonText: "Detalhes",
-        icon: PhosphorIcons.clock_counter_clockwise_bold,
+        statusColor: const Color(0xFFF59E0B),
+        gradientColors: const [
+          Color(0xFF0F172A),
+          Color(0xFF1769FF),
+        ],
+        buttonText: "Ver detalhes",
+        icon: PhosphorIcons.clock_counter_clockwise_fill,
+        isDark: isDark,
         isNext: true,
       );
     }
 
-    // Estado de descanso compactado
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.symmetric(vertical: 25.h, horizontal: 20.w),
+      padding: EdgeInsets.all(18.sp),
       decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20.r),
-          color: theme.cardColor,
-          border: Border.all(color: theme.dividerColor),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4))
-          ]),
+        color: surface,
+        borderRadius: BorderRadius.circular(24.r),
+        border: Border.all(
+          color: isDark ? Colors.white10 : const Color(0xFFE7ECF5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.22 : 0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
       child: Row(
-        // Row para economizar altura
         children: [
           Container(
-              padding: EdgeInsets.all(12.sp),
-              decoration: BoxDecoration(
-                  color: theme.scaffoldBackgroundColor, shape: BoxShape.circle),
-              child: Icon(PhosphorIcons.coffee_fill,
-                  size: 24.sp, color: Colors.grey)),
-          SizedBox(width: 15.w),
+            width: 54.w,
+            height: 54.w,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isDark ? Colors.white10 : _softBlue,
+            ),
+            child: const Icon(
+              PhosphorIcons.coffee_fill,
+              color: _academyBlue,
+            ),
+          ),
+          SizedBox(width: 14.w),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Tudo pronto por hoje!",
-                    style: GoogleFonts.sairaCondensed(
-                        fontSize: 20.sp,
-                        fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : Colors.black87)),
-                Text("Sem aulas pendentes.",
-                    style:
-                        GoogleFonts.inter(color: Colors.grey, fontSize: 12.sp)),
+                Text(
+                  "Tudo certo por enquanto",
+                  style: GoogleFonts.sairaCondensed(
+                    fontSize: 22.sp,
+                    fontWeight: FontWeight.w800,
+                    color: isDark ? Colors.white : _academyBlack,
+                  ),
+                ),
+                SizedBox(height: 4.h),
+                Text(
+                  "Nenhuma aula em andamento no momento. Aproveite para revisar o próximo compromisso.",
+                  style: GoogleFonts.inter(
+                    fontSize: 12.5.sp,
+                    height: 1.45,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.white70 : Colors.blueGrey[500],
+                  ),
+                ),
               ],
             ),
           ),
@@ -410,14 +700,16 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
     required List<Color> gradientColors,
     required String buttonText,
     required IconData icon,
+    required bool isDark,
     bool isNext = false,
+    bool isLive = false,
   }) {
-    // Card Principal deve ser IMPONENTE no mobile
+    final minutesUntil = _minutesUntil(classInfo.startTime);
+
     return Container(
-      width: double.infinity, // Ocupa largura total
-      padding: EdgeInsets.all(20.sp),
+      width: double.infinity,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20.r),
+        borderRadius: BorderRadius.circular(28.r),
         gradient: LinearGradient(
           colors: gradientColors,
           begin: Alignment.topLeft,
@@ -425,211 +717,554 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
         ),
         boxShadow: [
           BoxShadow(
-            color: gradientColors.last.withOpacity(0.4),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          )
+            color: gradientColors.last.withOpacity(0.28),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          // Topo do Card
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 4.h),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(20.r),
-                ),
-                child: Row(
+          Positioned(
+            right: -30.w,
+            top: -24.h,
+            child: Container(
+              width: 140.w,
+              height: 140.w,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.08),
+              ),
+            ),
+          ),
+          Positioned(
+            left: -25.w,
+            bottom: -36.h,
+            child: Container(
+              width: 120.w,
+              height: 120.w,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.06),
+              ),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.all(20.sp),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Icon(PhosphorIcons.clock_fill,
-                        color: Colors.white, size: 12.sp),
-                    SizedBox(width: 5.w),
-                    Text("${classInfo.startTime} - ${classInfo.endTime}",
-                        style: GoogleFonts.inter(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12.sp)),
+                    AnimatedBuilder(
+                      animation: _pulseAnim,
+                      builder: (context, child) {
+                        return Transform.scale(
+                          scale: isLive ? _pulseAnim.value : 1,
+                          child: child,
+                        );
+                      },
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 10.w,
+                          vertical: 6.h,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.14),
+                          borderRadius: BorderRadius.circular(999.r),
+                          border: Border.all(color: Colors.white24),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8.w,
+                              height: 8.w,
+                              decoration: BoxDecoration(
+                                color: statusColor,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            SizedBox(width: 8.w),
+                            Text(
+                              statusLabel,
+                              style: GoogleFonts.inter(
+                                color: Colors.white,
+                                fontSize: 11.sp,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      width: 42.w,
+                      height: 42.w,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.12),
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: Icon(
+                        icon,
+                        color: Colors.white,
+                        size: 20.sp,
+                      ),
+                    ),
                   ],
                 ),
-              ),
-              Icon(icon, color: Colors.white.withOpacity(0.8), size: 24.sp),
-            ],
-          ),
-
-          SizedBox(height: 15.h),
-
-          // Infos Principais
-          Text(classInfo.subject.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: GoogleFonts.sairaCondensed(
-                  color: Colors.white,
-                  fontSize: 26.sp, // Ajustado
-                  fontWeight: FontWeight.bold,
-                  height: 1.1)),
-
-          Text(classInfo.classInfo.name,
-              style: GoogleFonts.inter(
-                  color: Colors.white.withOpacity(0.9), fontSize: 14.sp)),
-
-          SizedBox(height: 8.h),
-
-          Row(
-            children: [
-              Icon(PhosphorIcons.map_pin, color: Colors.white70, size: 14.sp),
-              SizedBox(width: 5.w),
-              Text(classInfo.room ?? "Sala não definida",
-                  style:
-                      GoogleFonts.inter(color: Colors.white, fontSize: 13.sp)),
-            ],
-          ),
-
-          SizedBox(height: 20.h),
-
-          // Botão Full Width (Ergonomia)
-          SizedBox(
-            width: double.infinity,
-            height: 48.h, // Altura confortável para o dedo
-            child: ElevatedButton(
-              onPressed: () {},
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: gradientColors.first,
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12.r)),
-              ),
-              child: Text(buttonText.toUpperCase(),
+                SizedBox(height: 18.h),
+                Text(
+                  classInfo.subject.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.sairaCondensed(
+                    color: Colors.white,
+                    fontSize: 28.sp,
+                    height: 1,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                SizedBox(height: 8.h),
+                Text(
+                  classInfo.classInfo.name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.inter(
-                      fontWeight: FontWeight.bold, fontSize: 13.sp)),
+                    color: Colors.white.withOpacity(0.92),
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                SizedBox(height: 14.h),
+                Wrap(
+                  spacing: 8.w,
+                  runSpacing: 8.h,
+                  children: [
+                    _buildHeroInfoChip(
+                      icon: PhosphorIcons.clock_fill,
+                      label: "${classInfo.startTime} - ${classInfo.endTime}",
+                    ),
+                    _buildHeroInfoChip(
+                      icon: PhosphorIcons.map_pin_fill,
+                      label: classInfo.room?.trim().isNotEmpty == true
+                          ? classInfo.room!
+                          : "Sala não definida",
+                    ),
+                    if (isNext)
+                      _buildHeroInfoChip(
+                        icon: PhosphorIcons.timer_fill,
+                        label: minutesUntil > 0
+                            ? "Em $minutesUntil min"
+                            : "Começando em breve",
+                      ),
+                  ],
+                ),
+                SizedBox(height: 18.h),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50.h,
+                  child: ElevatedButton(
+                    onPressed: () {},
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: gradientColors.first,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16.r),
+                      ),
+                    ),
+                    child: Text(
+                      buttonText,
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13.sp,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          )
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildPendingTasksCard(ThemeData theme, bool isDark) {
-    // Reduzi a complexidade visual para não brigar com o Hero Card
+  Widget _buildHeroInfoChip({
+    required IconData icon,
+    required String label,
+  }) {
     return Container(
-      padding: EdgeInsets.all(16.sp),
+      padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
       decoration: BoxDecoration(
-        color: theme.cardColor,
-        borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: theme.dividerColor.withOpacity(0.5)),
+        color: Colors.white.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(999.r),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: Colors.white, size: 13.sp),
+          SizedBox(width: 6.w),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              color: Colors.white,
+              fontSize: 11.5.sp,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickStatsRow({
+    required Color surface,
+    required Color textPrimary,
+    required Color textSecondary,
+    required bool isDark,
+  }) {
+    final nextRoom =
+        _nextClass?.room?.trim().isNotEmpty == true ? _nextClass!.room! : "—";
+
+    return Row(
+      children: [
+        Expanded(
+          child: _buildStatCard(
+            surface: surface,
+            textPrimary: textPrimary,
+            textSecondary: textSecondary,
+            icon: PhosphorIcons.chalkboard_teacher_fill,
+            value: _classesTodayCount.toString(),
+            label: "Aulas hoje",
+            accent: _academyBlue,
+            softColor: isDark ? Colors.white10 : _softBlue,
+          ),
+        ),
+        SizedBox(width: 10.w),
+        Expanded(
+          child: _buildStatCard(
+            surface: surface,
+            textPrimary: textPrimary,
+            textSecondary: textSecondary,
+            icon: PhosphorIcons.check_circle_fill,
+            value: _completedTodayCount.toString(),
+            label: "Concluídas",
+            accent: _academyGreen,
+            softColor: isDark ? Colors.white10 : _softGreen,
+          ),
+        ),
+        SizedBox(width: 10.w),
+        Expanded(
+          child: _buildStatCard(
+            surface: surface,
+            textPrimary: textPrimary,
+            textSecondary: textSecondary,
+            icon: PhosphorIcons.door_fill,
+            value: nextRoom,
+            label: "Próxima sala",
+            accent: const Color(0xFFF59E0B),
+            softColor: isDark ? Colors.white10 : _softAmber,
+            isValueCompact: true,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStatCard({
+    required Color surface,
+    required Color textPrimary,
+    required Color textSecondary,
+    required IconData icon,
+    required String value,
+    required String label,
+    required Color accent,
+    required Color softColor,
+    bool isValueCompact = false,
+  }) {
+    return Container(
+      padding: EdgeInsets.all(14.sp),
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(20.r),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+        border: Border.all(color: const Color(0xFFE9EEF6)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(PhosphorIcons.bell_ringing_fill,
-                  color: Colors.orange, size: 18.sp),
-              SizedBox(width: 8.w),
-              Text("Atenção Necessária",
-                  style: GoogleFonts.inter(
-                      fontSize: 14.sp,
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? Colors.white : Colors.black87)),
-            ],
+          Container(
+            width: 36.w,
+            height: 36.w,
+            decoration: BoxDecoration(
+              color: softColor,
+              borderRadius: BorderRadius.circular(12.r),
+            ),
+            child: Icon(icon, color: accent, size: 18.sp),
           ),
           SizedBox(height: 12.h),
-          // Lista estática simulada - em produção usaria ListView.builder com shrinkWrap
-          _buildTaskItem("Frequência pendente: 1º Ano A", true, theme),
-          SizedBox(height: 8.h),
-          _buildTaskItem("Lançar notas: Prova de Geo.", false, theme),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.sairaCondensed(
+              fontSize: isValueCompact ? 20.sp : 24.sp,
+              fontWeight: FontWeight.w800,
+              color: textPrimary,
+              height: 1,
+            ),
+          ),
+          SizedBox(height: 3.h),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 11.sp,
+              fontWeight: FontWeight.w600,
+              color: textSecondary,
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildTaskItem(String text, bool isUrgent, ThemeData theme) {
-    final isDark = theme.brightness == Brightness.dark;
+  Widget _buildSectionHeader({
+    required String title,
+    required String subtitle,
+    required IconData icon,
+    required Color textPrimary,
+    required Color textSecondary,
+    Color iconColor = _academyBlue,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 42.w,
+          height: 42.w,
+          decoration: BoxDecoration(
+            color: iconColor.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(14.r),
+          ),
+          child: Icon(icon, color: iconColor, size: 20.sp),
+        ),
+        SizedBox(width: 12.w),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: GoogleFonts.inter(
+                  fontSize: 17.sp,
+                  fontWeight: FontWeight.w800,
+                  color: textPrimary,
+                ),
+              ),
+              SizedBox(height: 2.h),
+              Text(
+                subtitle,
+                style: GoogleFonts.inter(
+                  fontSize: 11.5.sp,
+                  fontWeight: FontWeight.w500,
+                  color: textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEmptyAgendaCard({
+    required Color surface,
+    required Color textPrimary,
+    required Color textSecondary,
+    required bool isDark,
+  }) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+      width: double.infinity,
+      padding: EdgeInsets.all(18.sp),
       decoration: BoxDecoration(
-        color: isDark ? Colors.grey[800]!.withOpacity(0.3) : Colors.grey[50],
-        borderRadius: BorderRadius.circular(8.r),
-        border: Border(
-            left: BorderSide(
-                color: isUrgent ? Colors.red : Colors.blue, width: 3)),
+        color: surface,
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(
+          color: isDark ? Colors.white10 : const Color(0xFFE7ECF5),
+        ),
       ),
       child: Row(
         children: [
+          Container(
+            width: 48.w,
+            height: 48.w,
+            decoration: BoxDecoration(
+              color: isDark ? Colors.white10 : _softBlue,
+              borderRadius: BorderRadius.circular(14.r),
+            ),
+            child: const Icon(
+              PhosphorIcons.calendar_x_fill,
+              color: _academyBlue,
+            ),
+          ),
+          SizedBox(width: 14.w),
           Expanded(
-              child: Text(text,
-                  style: GoogleFonts.inter(
-                      fontSize: 12.sp,
-                      color: isDark ? Colors.grey[300] : Colors.grey[800]))),
-          if (isUrgent)
-            Icon(PhosphorIcons.warning_circle_fill,
-                color: Colors.red, size: 16.sp)
+            child: Text(
+              "Nenhuma aula encontrada nos próximos dias. Seu cronograma está livre no momento.",
+              style: GoogleFonts.inter(
+                fontSize: 12.5.sp,
+                height: 1.45,
+                fontWeight: FontWeight.w500,
+                color: textSecondary,
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _buildTimelineCard(HorarioModel aula, ThemeData theme, bool isDark) {
-    // Lógica visual mantida, apenas ajuste de padding e tamanho
+  Widget _buildTimelineCard(HorarioModel aula, Color surface, bool isDark) {
     final nowMin = TimeOfDay.now().hour * 60 + TimeOfDay.now().minute;
     final startMin = _timeToMinutes(aula.startTime);
     final endMin = _timeToMinutes(aula.endTime);
 
     bool isLive = false;
     bool isDone = false;
+
     if (_timelineTitle.contains("Hoje")) {
       if (nowMin >= startMin && nowMin < endMin) isLive = true;
       if (nowMin >= endMin) isDone = true;
     }
 
-    Color accentColor =
-        isLive ? Colors.blue : (isDone ? Colors.grey : Colors.orange);
+    final Color accentColor = isLive
+        ? _academyBlue
+        : (isDone ? Colors.blueGrey : const Color(0xFFF59E0B));
+
+    final Color softAccent =
+        isLive ? _softBlue : (isDone ? const Color(0xFFF1F5F9) : _softAmber);
 
     return Container(
-      width: 140.w, // Largura fixa menor para mobile
-      padding: EdgeInsets.all(12.sp),
+      width: 212.w,
+      padding: EdgeInsets.all(16.sp),
       decoration: BoxDecoration(
-        color: isLive ? Colors.blue.withOpacity(0.1) : theme.cardColor,
-        borderRadius: BorderRadius.circular(12.r),
+        color: surface,
+        borderRadius: BorderRadius.circular(22.r),
         border: Border.all(
-            color: isLive ? Colors.blue : theme.dividerColor.withOpacity(0.5)),
+          color:
+              isLive ? _academyBlue.withOpacity(0.35) : const Color(0xFFE6ECF5),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(aula.startTime,
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                decoration: BoxDecoration(
+                  color: softAccent,
+                  borderRadius: BorderRadius.circular(999.r),
+                ),
+                child: Text(
+                  "${aula.startTime} • ${aula.endTime}",
                   style: GoogleFonts.inter(
-                      fontSize: 12.sp,
-                      fontWeight: FontWeight.w700,
-                      color: accentColor)),
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.w800,
+                    color: accentColor,
+                  ),
+                ),
+              ),
+              const Spacer(),
+              if (isLive)
+                Container(
+                  width: 10.w,
+                  height: 10.w,
+                  decoration: const BoxDecoration(
+                    color: _academyGreen,
+                    shape: BoxShape.circle,
+                  ),
+                ),
               if (isDone)
-                Icon(PhosphorIcons.check, size: 14.sp, color: Colors.green)
+                Icon(
+                  PhosphorIcons.check_circle_fill,
+                  size: 18.sp,
+                  color: _academyGreen,
+                ),
             ],
           ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          SizedBox(height: 14.h),
+          Text(
+            aula.subject.name,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.sairaCondensed(
+              fontSize: 23.sp,
+              height: 1,
+              fontWeight: FontWeight.w800,
+              color: isDark ? Colors.white : _academyBlack,
+            ),
+          ),
+          SizedBox(height: 8.h),
+          Text(
+            aula.classInfo.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.inter(
+              fontSize: 12.5.sp,
+              fontWeight: FontWeight.w600,
+              color: isDark ? Colors.white70 : Colors.blueGrey[600],
+            ),
+          ),
+          const Spacer(),
+          Row(
             children: [
-              Text(aula.subject.name,
+              Container(
+                width: 34.w,
+                height: 34.w,
+                decoration: BoxDecoration(
+                  color: softAccent,
+                  borderRadius: BorderRadius.circular(10.r),
+                ),
+                child: Icon(
+                  PhosphorIcons.map_pin_fill,
+                  size: 16.sp,
+                  color: accentColor,
+                ),
+              ),
+              SizedBox(width: 10.w),
+              Expanded(
+                child: Text(
+                  aula.room?.trim().isNotEmpty == true
+                      ? aula.room!
+                      : "Sala não definida",
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.inter(
-                      fontSize: 14.sp,
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? Colors.white : Colors.black87)),
-              Text(aula.classInfo.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style:
-                      GoogleFonts.inter(fontSize: 11.sp, color: Colors.grey)),
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? Colors.white : _academyBlack,
+                  ),
+                ),
+              ),
             ],
           ),
         ],
@@ -637,45 +1272,282 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView> {
     );
   }
 
-  Widget _buildQuickAccessCard(
-      String title, IconData icon, Color color, ThemeData theme) {
-    final isDark = theme.brightness == Brightness.dark;
+  Widget _buildFocusInsightCard({
+    required Color surface,
+    required Color textPrimary,
+    required Color textSecondary,
+    required bool isDark,
+  }) {
+    String title;
+    String description;
+    IconData icon;
+    Color accent;
 
-    // Design Vertical para o Grid
-    return InkWell(
-      onTap: () {},
-      borderRadius: BorderRadius.circular(15.r),
-      child: Container(
-        decoration: BoxDecoration(
-            color: theme.cardColor,
-            borderRadius: BorderRadius.circular(15.r),
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black.withOpacity(0.03),
-                  blurRadius: 5,
-                  offset: const Offset(0, 2))
-            ]),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              padding: EdgeInsets.all(10.sp),
-              decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: color, size: 22.sp),
-            ),
-            SizedBox(height: 10.h),
-            Text(title,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                    fontSize: 13.sp,
-                    fontWeight: FontWeight.w600,
-                    height: 1.2,
-                    color: isDark ? Colors.white : Colors.blueGrey[800])),
-          ],
+    if (_isClassLive && _currentClass != null) {
+      title = "Momento de execução";
+      description =
+          "Sua atenção principal agora está em ${_currentClass!.subject.name}. O painel foi pensado para destacar a aula ativa e reduzir ruído.";
+      icon = PhosphorIcons.lightning_fill;
+      accent = _academyGreen;
+    } else if (_nextClass != null) {
+      title = "Prepare a próxima entrada";
+      description =
+          "Sua próxima aula é ${_nextClass!.subject.name}. Verifique sala, turma e ritmo do restante do turno.";
+      icon = PhosphorIcons.sparkle_fill;
+      accent = _academyBlue;
+    } else {
+      title = "Janela livre no cronograma";
+      description =
+          "Sem compromissos letivos imediatos. Este é um bom momento para revisar frequência, conteúdo ou registros.";
+      icon = PhosphorIcons.compass_fill;
+      accent = const Color(0xFFF59E0B);
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.all(18.sp),
+      decoration: BoxDecoration(
+        color: surface,
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(
+          color: isDark ? Colors.white10 : const Color(0xFFE7ECF5),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 14,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 46.w,
+            height: 46.w,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(14.r),
+            ),
+            child: Icon(icon, color: accent, size: 21.sp),
+          ),
+          SizedBox(width: 12.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 15.sp,
+                    fontWeight: FontWeight.w800,
+                    color: textPrimary,
+                  ),
+                ),
+                SizedBox(height: 6.h),
+                Text(
+                  description,
+                  style: GoogleFonts.inter(
+                    fontSize: 12.5.sp,
+                    height: 1.5,
+                    fontWeight: FontWeight.w500,
+                    color: textSecondary,
+                  ),
+                ),
+                if (_currentTerm != null) ...[
+                  SizedBox(height: 10.h),
+                  Container(
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 10.w, vertical: 7.h),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.white10 : _softBlue,
+                      borderRadius: BorderRadius.circular(999.r),
+                    ),
+                    child: Text(
+                      "Período letivo ativo",
+                      style: GoogleFonts.inter(
+                        fontSize: 11.sp,
+                        fontWeight: FontWeight.w800,
+                        color: _academyBlue,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBirthdayCard(Student student, Color surface, bool isDark) {
+    final currentYear = DateTime.now().year;
+    final birthYear = student.birthDate.year;
+    final ageTurning = currentYear - birthYear;
+    final formattedBday = DateFormat("dd/MM").format(student.birthDate);
+
+    return Container(
+      width: 248.w,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24.r),
+        gradient: LinearGradient(
+          colors: isDark
+              ? [
+                  const Color(0xFF1E293B),
+                  const Color(0xFF0F172A),
+                ]
+              : [
+                  Colors.white,
+                  const Color(0xFFFFFBF4),
+                ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: const Color(0xFFF4D9A8).withOpacity(0.7),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFFF59E0B).withOpacity(0.12),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            right: -18.w,
+            top: -14.h,
+            child: Container(
+              width: 86.w,
+              height: 86.w,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFFFDE7B0).withOpacity(0.35),
+              ),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.all(16.sp),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 50.w,
+                      height: 50.w,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          colors: [
+                            Color(0xFFFFD36E),
+                            Color(0xFFF59E0B),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFFF59E0B).withOpacity(0.22),
+                            blurRadius: 14,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          _getInitials(student.fullName),
+                          style: GoogleFonts.inter(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15.sp,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    SizedBox(width: 12.w),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 10.w,
+                              vertical: 5.h,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF3D8),
+                              borderRadius: BorderRadius.circular(999.r),
+                            ),
+                            child: Text(
+                              "Aniversário • $formattedBday",
+                              style: GoogleFonts.inter(
+                                fontSize: 10.5.sp,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFFB87400),
+                              ),
+                            ),
+                          ),
+                          SizedBox(height: 8.h),
+                          Text(
+                            student.fullName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 14.sp,
+                              height: 1.2,
+                              fontWeight: FontWeight.w800,
+                              color: isDark ? Colors.white : _academyBlack,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Container(
+                  width: double.infinity,
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? Colors.white.withOpacity(0.06)
+                        : const Color(0xFFFFFAEF),
+                    borderRadius: BorderRadius.circular(16.r),
+                    border: Border.all(
+                      color: const Color(0xFFF7DDA2).withOpacity(0.8),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        PhosphorIcons.confetti_fill,
+                        color: const Color(0xFFF59E0B),
+                        size: 18.sp,
+                      ),
+                      SizedBox(width: 10.w),
+                      Expanded(
+                        child: Text(
+                          "Completa $ageTurning anos neste mês",
+                          style: GoogleFonts.inter(
+                            fontSize: 12.sp,
+                            fontWeight: FontWeight.w700,
+                            color: isDark ? Colors.white : _academyBlack,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

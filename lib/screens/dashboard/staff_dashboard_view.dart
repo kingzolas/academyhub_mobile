@@ -137,7 +137,9 @@ class _StaffDashboardViewState extends State<StaffDashboardView> {
       barrierDismissible: false,
       builder: (ctx) => StaffFormDialog(onSubmit: (data) async {
         final userProvider = Provider.of<UserProvider>(context, listen: false);
+
         final authProvider = Provider.of<AuthProvider>(context, listen: false);
+        ;
         await userProvider.addStaff(data, authProvider.token!);
         return userProvider.error == null;
       }),

@@ -8,6 +8,7 @@ import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/class_provider.dart';
 import 'package:academyhub_mobile/providers/report_card_provider.dart';
 import 'package:academyhub_mobile/providers/student_provider.dart';
+import 'package:academyhub_mobile/providers/horario_provider.dart'; // NOVO IMPORT
 import 'package:academyhub_mobile/screens/teacher/screen_report_card_detail.dart';
 import 'package:academyhub_mobile/widgets/report_card_operation_dialog.dart';
 import 'package:flutter/material.dart';
@@ -95,6 +96,22 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
         return allClasses;
       }
 
+      // --- NOVA LÓGICA DE FILTRO DO PROFESSOR (MOBILE) ---
+      try {
+        final userId = user.id?.toString() ?? '';
+        if (userId.isNotEmpty) {
+          final horariosProvider = context.read<HorarioProvider>();
+          final turmasDoProfessor = horariosProvider.horarios
+              .where((h) => h.teacherId == userId)
+              .map((h) => h.classId)
+              .toSet();
+
+          return allClasses
+              .where((c) => turmasDoProfessor.contains(c.id))
+              .toList();
+        }
+      } catch (_) {}
+
       return allClasses;
     } catch (_) {
       return allClasses;
@@ -115,6 +132,7 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
       var academic = context.read<AcademicCalendarProvider>();
       var classesProvider = context.read<ClassProvider>();
       var students = context.read<StudentProvider>();
+      var horarios = context.read<HorarioProvider>(); // NOVO
 
       if (auth.token != null) {
         if (academic.schoolYears.isEmpty) {
@@ -135,6 +153,15 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
 
         if (students.students.isEmpty) {
           await students.fetchStudents(auth.token!);
+        }
+        if (!mounted) return;
+
+        // --- FETCH HORARIOS ---
+        horarios = context.read<HorarioProvider>();
+        if (horarios.horarios.isEmpty) {
+          try {
+            await horarios.fetchHorarios(auth.token!);
+          } catch (_) {}
         }
         if (!mounted) return;
 
@@ -842,6 +869,7 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
     final classesProvider = context.watch<ClassProvider>();
     final academic = context.watch<AcademicCalendarProvider>();
     final auth = context.watch<AuthProvider>();
+    final horarios = context.watch<HorarioProvider>(); // NOVO WATCH
 
     final availableClasses =
         _getAvailableClasses(context, classesProvider.classes, auth.user);
@@ -1241,7 +1269,7 @@ class _ActiveFilterChips extends StatelessWidget {
           label: className,
           color: palette.accentGreen,
         ),
-      if (status.isNotEmpty)
+      if (status.isNotEmpty && status != 'Todos')
         _MiniTag(
           palette: palette,
           label: status,

@@ -34,6 +34,15 @@ class UserProvider with ChangeNotifier {
     }
   }
 
+  void clear() {
+    _users = [];
+    _isLoading = false;
+    _error = null;
+    _isInitialLoading = true;
+    notifyListeners();
+    debugPrint('🧹 [UserProvider] Provider state cleared.');
+  }
+
   // --- MÉTODOS DE API ---
 
   Future<void> fetchUsers(String token) async {

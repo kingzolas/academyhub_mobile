@@ -8,6 +8,8 @@ import 'package:provider/provider.dart';
 
 import '../../model/attendance_model.dart';
 import '../../providers/attendance_provider.dart';
+// [NOVO] Import do modal elegante de salvamento
+import '../../widgets/attendance_operation_dialog.dart';
 
 class AttendanceSwipeScreen extends StatefulWidget {
   final String classId;
@@ -348,22 +350,21 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
                     borderRadius: BorderRadius.circular(16.r)),
               ),
               onPressed: () async {
-                final success = await provider.submitAttendance();
-                if (mounted) {
-                  if (success) {
-                    widget.onBack();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text("Chamada salva com sucesso!"),
-                          backgroundColor: Color(0xFF00A859)),
-                    );
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                          content: Text("Erro: ${provider.error}"),
-                          backgroundColor: Colors.red),
-                    );
-                  }
+                // [NOVO] Integração com o Modal Elegante de Salvamento
+                final success = await showAttendanceOperationDialog(
+                  context: context,
+                  operation: () async {
+                    final isSaved = await provider.submitAttendance();
+                    if (!isSaved) {
+                      throw Exception(
+                          provider.error ?? "Ocorreu um erro desconhecido.");
+                    }
+                  },
+                );
+
+                // Se o diálogo retornar sucesso (true), fecha a tela de chamada
+                if (success == true && mounted) {
+                  widget.onBack();
                 }
               },
               child: provider.isLoading

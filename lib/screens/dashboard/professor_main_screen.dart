@@ -140,50 +140,50 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
   PreferredSizeWidget? _buildAppBar(BuildContext context) {
     if (_shouldHideAppBar()) return null;
 
-    return AppBar(
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      backgroundColor: Colors.transparent,
-      centerTitle: true,
-      automaticallyImplyLeading: false,
-      flexibleSpace: ClipRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.6),
-          ),
-        ),
-      ),
-      title: SvgPicture.asset(
-        'lib/assets/LogoAcademy.svg',
-        height: 28.h,
-      ),
-      actions: [
-        Center(
-          child: Container(
-            margin: EdgeInsets.only(right: 20.w),
-            width: 10.w,
-            height: 10.w,
-            decoration: BoxDecoration(
-              color: _socketStatus == WebSocketStatus.connected
-                  ? Colors.green
-                  : Colors.red,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: (_socketStatus == WebSocketStatus.connected
-                          ? Colors.green
-                          : Colors.red)
-                      .withOpacity(0.4),
-                  blurRadius: 4,
-                  spreadRadius: 2,
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
+    // return AppBar(
+    //   elevation: 0,
+    //   scrolledUnderElevation: 0,
+    //   backgroundColor: Colors.transparent,
+    //   centerTitle: true,
+    //   automaticallyImplyLeading: false,
+    //   flexibleSpace: ClipRect(
+    //     child: BackdropFilter(
+    //       filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+    //       child: Container(
+    //         color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.6),
+    //       ),
+    //     ),
+    //   ),
+    //   title: SvgPicture.asset(
+    //     'lib/assets/LogoAcademy.svg',
+    //     height: 28.h,
+    //   ),
+    //   actions: [
+    //     Center(
+    //       child: Container(
+    //         margin: EdgeInsets.only(right: 20.w),
+    //         width: 10.w,
+    //         height: 10.w,
+    //         decoration: BoxDecoration(
+    //           color: _socketStatus == WebSocketStatus.connected
+    //               ? Colors.green
+    //               : Colors.red,
+    //           shape: BoxShape.circle,
+    //           boxShadow: [
+    //             BoxShadow(
+    //               color: (_socketStatus == WebSocketStatus.connected
+    //                       ? Colors.green
+    //                       : Colors.red)
+    //                   .withOpacity(0.4),
+    //               blurRadius: 4,
+    //               spreadRadius: 2,
+    //             ),
+    //           ],
+    //         ),
+    //       ),
+    //     ),
+    //   ],
+    // );
   }
 
   @override

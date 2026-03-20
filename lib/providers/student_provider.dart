@@ -78,4 +78,11 @@ class StudentProvider with ChangeNotifier {
   Future<Uint8List?> getPhoto(String id, String? token) async {
     return await _service.getStudentPhoto(id, token);
   }
+
+  void clear() {
+    _students.clear();
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+  }
 }

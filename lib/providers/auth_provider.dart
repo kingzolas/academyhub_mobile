@@ -4,13 +4,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
-import 'package:http/http.dart'
-    as http; // [ADICIONADO] Necessário para chamada do link
+import 'package:http/http.dart' as http;
 
 import 'package:academyhub_mobile/model/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/auth_student_service.dart';
 import 'school_provider.dart';
+
+// [NOVO] Imports dos Providers que precisam ser limpos no logout
+import 'package:academyhub_mobile/providers/class_provider.dart';
+import 'package:academyhub_mobile/providers/student_provider.dart';
+import 'package:academyhub_mobile/providers/horario_provider.dart';
+import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
+import 'package:academyhub_mobile/providers/user_provider.dart';
+import 'package:academyhub_mobile/providers/report_card_provider.dart';
 
 class AuthProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -28,6 +35,28 @@ class AuthProvider with ChangeNotifier {
   bool get isStudent =>
       (_user?.roles.contains('Aluno') ?? false) ||
       (_user?.roles.contains('Student') ?? false);
+
+  // =================================================================
+  // [NOVO] FUNÇÃO GLOBAL PARA LIMPEZA DE CACHE DOS PROVIDERS
+  // =================================================================
+  static void clearAppCache(BuildContext context) {
+    debugPrint(
+        '🧹 [AuthProvider] Iniciando limpeza de cache dos Providers globais...');
+    try {
+      // Importante: A flag listen: false é OBRIGATÓRIA aqui.
+      Provider.of<ClassProvider>(context, listen: false).clear();
+      Provider.of<StudentProvider>(context, listen: false).clear();
+      Provider.of<HorarioProvider>(context, listen: false).clear();
+      Provider.of<AcademicCalendarProvider>(context, listen: false).clear();
+      Provider.of<UserProvider>(context, listen: false).clear();
+      Provider.of<ReportCardProvider>(context, listen: false).clear();
+
+      debugPrint('✅ [AuthProvider] Cache limpo com sucesso.');
+    } catch (e) {
+      debugPrint(
+          '⚠️ [AuthProvider] Aviso na limpeza de cache: Algum provider não possui o método clear(). Erro: $e');
+    }
+  }
 
   Future<void> login(
       String identifier, String password, BuildContext context) async {
@@ -128,15 +157,13 @@ class AuthProvider with ChangeNotifier {
   }
 
   // =================================================================
-  // [NOVO] LÓGICA DO MAGIC LINK DO WHATSAPP
+  // LÓGICA DO MAGIC LINK DO WHATSAPP
   // =================================================================
   Future<bool> loginWithMagicLink(
       String magicToken, BuildContext context) async {
     try {
       debugPrint('--- [AuthProvider] Iniciando login via Magic Link ---');
 
-      // ⚠️ ATENÇÃO: Coloquei a URL base mockada aqui.
-      // Substitua pelo endereço real da sua API (ex: https://api.eyecode.com.br/api)
       const String baseUrl = '${ApiConfig.baseUrl}/api';
 
       final url =
@@ -148,7 +175,6 @@ class AuthProvider with ChangeNotifier {
         final responseData = json.decode(httpResponse.body);
         final studentData = responseData['student'];
 
-        // O MESMO mapeamento usado no login de aluno acima
         final Map<String, dynamic> rawUser = {
           "_id": studentData['id'],
           "fullName": studentData['fullName'],
@@ -191,21 +217,34 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  Future<void> logout() async {
+  // =================================================================
+  // [AJUSTADO] FUNÇÃO DE LOGOUT
+  // =================================================================
+  Future<void> logout([BuildContext? context]) async {
+    // 1. Limpa o cache dos providers em memória (se o context foi passado)
+    if (context != null && context.mounted) {
+      clearAppCache(context);
+    } else {
+      debugPrint(
+          '⚠️ [AuthProvider] Context não fornecido ao logout. Cache local pode não ter sido limpo.');
+    }
+
+    // 2. Apaga as variáveis locais da sessão
     _user = null;
     _token = null;
 
+    // 3. Remove do armazenamento permanente
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('authToken');
     await prefs.remove('userData');
-
     await prefs.remove('student_token');
     await prefs.remove('student_data');
     await prefs.remove('user_role');
 
     debugPrint(
-        '🗑️ [AuthProvider] Token e usuário removidos do SharedPreferences.');
+        '🗑️ [AuthProvider] Sessão encerrada e dados removidos do SharedPreferences.');
 
+    // 4. Avisa a UI para redesenhar e jogar para tela de login
     notifyListeners();
   }
 
@@ -249,7 +288,8 @@ class AuthProvider with ChangeNotifier {
       } catch (e) {
         debugPrint(
             '❌ [AuthProvider] Erro ao processar dados salvos no auto-login: $e');
-        await logout();
+        // Usando o context se houver erro e precisar forçar o logout
+        await logout(context);
         return false;
       }
     }

@@ -39,6 +39,17 @@ class AcademicCalendarProvider with ChangeNotifier {
     _error = null;
   }
 
+  void clear() {
+    _schoolYears = [];
+    _terms = [];
+    _selectedSchoolYear = null;
+    _isLoadingYears = false;
+    _isLoadingTerms = false;
+    _error = null;
+    notifyListeners();
+    debugPrint('🧹 [AcademicCalendarProvider] Provider state cleared.');
+  }
+
   // [REMOVIDO] _setLoading e _setError
   // É mais claro e seguro definir _isLoadingYears e _isLoadingTerms
   // separadamente dentro de cada método.

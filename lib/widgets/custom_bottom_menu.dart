@@ -14,10 +14,10 @@ class CustomSpeedDialMenu extends StatefulWidget {
   final VoidCallback onNavigateToAttendance;
   final VoidCallback onNavigateToStaff;
 
-  // [NOVO] Ação do Scanner de Provas
+  // Ação do Scanner de Provas
   final VoidCallback? onNavigateToScanner;
 
-  // [NOVO] Ação do Boletim para Professor
+  // Ação do Boletim para Professor
   final VoidCallback? onNavigateToReportCards;
 
   // Ações de Aluno
@@ -93,8 +93,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
     if (widget.isStudent) {
       return [
         _RadialMenuAction(
-          angle: 120,
-          distance: 130.h,
+          angle: 135,
+          distance: 140.h,
           icon: PhosphorIcons.exam_fill,
           label: 'Boletim',
           color: const Color(0xFF00A859),
@@ -103,8 +103,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
           isBig: true,
         ),
         _RadialMenuAction(
-          angle: 60,
-          distance: 130.h,
+          angle: 45,
+          distance: 140.h,
           icon: PhosphorIcons.megaphone_fill,
           label: 'Mural de\nAvisos',
           color: Colors.white,
@@ -118,8 +118,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
     if (widget.isProfessor) {
       return [
         _RadialMenuAction(
-          angle: 150,
-          distance: 128.h,
+          angle: 155, // Extrema Esquerda (Inclinado pra não bater na barra)
+          distance: 140.h,
           icon: PhosphorIcons.check_circle_fill,
           label: 'Realizar\nChamada',
           color: const Color(0xFF00A859),
@@ -128,8 +128,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
           isBig: true,
         ),
         _RadialMenuAction(
-          angle: 115,
-          distance: 142.h,
+          angle: 115, // Topo Esquerda
+          distance: 155.h, // Mais alto pra ficar no topo
           icon: PhosphorIcons.file_text_fill,
           label: 'Boletins',
           color: const Color(0xFF2F80ED),
@@ -138,8 +138,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
           isBig: true,
         ),
         _RadialMenuAction(
-          angle: 75,
-          distance: 142.h,
+          angle: 65, // Topo Direita
+          distance: 155.h,
           icon: PhosphorIcons.scan_bold,
           label: 'Corrigir\nProvas',
           color: Colors.black,
@@ -148,8 +148,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
           isBig: true,
         ),
         _RadialMenuAction(
-          angle: 35,
-          distance: 128.h,
+          angle: 25, // Extrema Direita
+          distance: 140.h,
           icon: PhosphorIcons.identification_card_fill,
           label: 'Meus\nDados',
           color: Colors.white,
@@ -160,10 +160,11 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
       ];
     }
 
+    // Default (Staff / Gestor)
     return [
       _RadialMenuAction(
-        angle: 120,
-        distance: 130.h,
+        angle: 135,
+        distance: 140.h,
         icon: PhosphorIcons.check_circle_fill,
         label: 'Realizar\nChamada',
         color: const Color(0xFF00A859),
@@ -172,8 +173,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
         isBig: true,
       ),
       _RadialMenuAction(
-        angle: 60,
-        distance: 130.h,
+        angle: 45,
+        distance: 140.h,
         icon: PhosphorIcons.identification_card_fill,
         label: 'Gestão de\nEquipe',
         color: Colors.white,
@@ -196,7 +197,9 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
 
     final Size screenSize = MediaQuery.of(context).size;
     final double centerX = screenSize.width / 2;
-    final double anchorBottom = fabBottomMargin + (fabSize / 2);
+
+    // [AJUSTE] Âncora Y um pouco mais alta para compensar a barra de navegação
+    final double anchorBottom = fabBottomMargin + (fabSize / 2) + 20.h;
 
     final actions = _buildActions();
 
@@ -206,6 +209,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
       child: Stack(
         alignment: Alignment.bottomCenter,
         children: [
+          // Fundo escurecido e desfocado
           Positioned.fill(
             child: IgnorePointer(
               ignoring: !_isOpen,
@@ -228,6 +232,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
               ),
             ),
           ),
+
+          // Botões do leque
           ...actions.map(
             (action) => _buildPhysicalNavigationButton(
               centerX: centerX,
@@ -242,6 +248,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
               isBig: action.isBig,
             ),
           ),
+
+          // Barra de Navegação Inferior
           Positioned(
             bottom: 0,
             left: 0,
@@ -306,6 +314,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
               ),
             ),
           ),
+
+          // FAB Central (Botão X)
           Positioned(
             bottom: fabBottomMargin,
             child: GestureDetector(
@@ -391,30 +401,38 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
   }) {
     final double rad = angle * (math.pi / 180);
     final double buttonSize = isBig ? 65.w : 55.w;
+    final double textWidth = 110.w;
 
     return AnimatedBuilder(
       animation: _expandAnimation,
       builder: (context, child) {
         final double progress = _expandAnimation.value;
         final double currentDist = distance * progress;
+
         final double offsetX = currentDist * math.cos(rad);
         final double offsetY = currentDist * math.sin(rad);
+
+        // Define a posição matemática exata do botão
         final double leftPos = centerX + offsetX - (buttonSize / 2);
-        final double bottomPos = anchorBottom + offsetY - (buttonSize / 2);
-        final double opacity = progress.clamp(0.0, 1.0);
+        final double bottomPos = anchorBottom + offsetY - (buttonSize / 4);
 
         if (_controller.isDismissed) return const SizedBox();
 
         return Positioned(
           left: leftPos,
           bottom: bottomPos,
+          width: buttonSize,
+          height: buttonSize,
           child: Opacity(
-            opacity: opacity,
+            opacity: progress.clamp(0.0, 1.0),
             child: Transform.scale(
               scale: progress,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+              child: Stack(
+                clipBehavior:
+                    Clip.none, // O texto vai vazar por baixo livremente
+                alignment: Alignment.center,
                 children: [
+                  // O Círculo do Botão
                   GestureDetector(
                     onTap: () {
                       _toggleMenu();
@@ -428,8 +446,8 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.2),
-                            blurRadius: 8,
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
                         ],
@@ -441,9 +459,10 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                       ),
                     ),
                   ),
-                  SizedBox(height: 8.h),
-                  Material(
-                    color: Colors.transparent,
+                  // O Rótulo (Texto) abaixo do Botão
+                  Positioned(
+                    top: buttonSize + 6.h,
+                    width: textWidth,
                     child: Text(
                       label,
                       textAlign: TextAlign.center,
@@ -451,10 +470,11 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                         color: Colors.white,
                         fontSize: 12.sp,
                         fontWeight: FontWeight.w700,
+                        height: 1.1,
                         shadows: [
                           Shadow(
                             color: Colors.black.withOpacity(0.8),
-                            blurRadius: 4,
+                            blurRadius: 6,
                           ),
                         ],
                       ),

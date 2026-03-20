@@ -185,4 +185,11 @@ class ClassProvider with ChangeNotifier {
           "[ClassProvider] Contagem decrementada para turma ${currentClass.name}");
     }
   }
+
+  void clear() {
+    _classes = [];
+    _isLoading = false;
+    _error = null;
+    notifyListeners();
+  }
 }
