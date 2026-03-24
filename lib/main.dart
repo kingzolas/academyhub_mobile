@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/config/app_theme.dart';
+import 'package:academyhub_mobile/main.dart' as NavigationService;
+import 'package:academyhub_mobile/providers/absence_justification_provider.dart';
 import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
 import 'package:academyhub_mobile/providers/assessment_provider.dart';
 import 'package:academyhub_mobile/providers/attendance_provider.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/class_provider.dart';
 import 'package:academyhub_mobile/providers/dashboard_provider.dart';
+import 'package:academyhub_mobile/providers/enrollment_provider.dart';
 import 'package:academyhub_mobile/providers/expense_provider.dart';
 import 'package:academyhub_mobile/providers/financial_automation_provider.dart';
 import 'package:academyhub_mobile/providers/horario_provider.dart';
@@ -15,6 +18,7 @@ import 'package:academyhub_mobile/providers/report_card_provider.dart';
 
 import 'package:academyhub_mobile/providers/schedule_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
+import 'package:academyhub_mobile/providers/student_note_provider.dart';
 import 'package:academyhub_mobile/providers/student_provider.dart';
 import 'package:academyhub_mobile/providers/subject_provider.dart';
 import 'package:academyhub_mobile/providers/theme_provider.dart';
@@ -87,6 +91,9 @@ void main() async {
             ),
           ),
           ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider(create: (_) => EnrollmentProvider()),
+          ChangeNotifierProvider(create: (_) => StudentNoteProvider()),
+          ChangeNotifierProvider(create: (_) => AbsenceJustificationProvider()),
           ChangeNotifierProvider(create: (_) => HorarioProvider()),
           ChangeNotifierProvider(create: (_) => ExpenseProvider()),
           ChangeNotifierProvider(create: (_) => AttendanceProvider()),
@@ -139,6 +146,7 @@ class ErrorApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: NavigationService.navigatorKey,
       debugShowCheckedModeBanner: false,
       home: Scaffold(
         backgroundColor: const Color(0xFFB71C1C),

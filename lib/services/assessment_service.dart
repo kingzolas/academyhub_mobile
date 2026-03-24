@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:academyhub_mobile/config/api_client.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../config/api_config.dart';
@@ -44,7 +45,7 @@ class AssessmentService {
         'description': description
       });
 
-      final response = await http.post(url, headers: headers, body: body);
+      final response = await ApiClient.post(url, headers: headers, body: body);
 
       if (response.statusCode == 201) {
         return Assessment.fromJson(jsonDecode(response.body));
@@ -61,7 +62,7 @@ class AssessmentService {
         Uri.parse('${ApiConfig.baseUrl}/api/assessments/$assessmentId/publish');
     try {
       final headers = await _getHeaders();
-      final response = await http.patch(url, headers: headers);
+      final response = await ApiClient.patch(url, headers: headers);
 
       if (response.statusCode == 200) {
         return Assessment.fromJson(jsonDecode(response.body));
@@ -78,7 +79,7 @@ class AssessmentService {
         Uri.parse('${ApiConfig.baseUrl}/api/assessments/class/$classId');
     try {
       final headers = await _getHeaders();
-      final response = await http.get(url, headers: headers);
+      final response = await ApiClient.get(url, headers: headers);
 
       if (response.statusCode == 200) {
         final List<dynamic> data = jsonDecode(response.body);
@@ -95,7 +96,7 @@ class AssessmentService {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/assessments/$assessmentId');
     try {
       final headers = await _getHeaders();
-      final response = await http.get(url, headers: headers);
+      final response = await ApiClient.get(url, headers: headers);
 
       if (response.statusCode == 200) {
         return Assessment.fromJson(jsonDecode(response.body));
@@ -111,7 +112,7 @@ class AssessmentService {
     final url = Uri.parse('${ApiConfig.baseUrl}/api/assessments/$assessmentId');
     try {
       final headers = await _getHeaders();
-      final response = await http.delete(url, headers: headers);
+      final response = await ApiClient.delete(url, headers: headers);
 
       if (response.statusCode != 200) {
         throw Exception(_parseError(response));

@@ -1,14 +1,16 @@
 import 'package:appinio_swiper/appinio_swiper.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Para HapticFeedback
+import 'package:flutter/services.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:intl/intl.dart';
 
 import '../../model/attendance_model.dart';
 import '../../providers/attendance_provider.dart';
-// [NOVO] Import do modal elegante de salvamento
+import '../../providers/absence_justification_provider.dart';
+import '../../providers/auth_provider.dart';
 import '../../widgets/attendance_operation_dialog.dart';
 
 class AttendanceSwipeScreen extends StatefulWidget {
@@ -30,14 +32,41 @@ class AttendanceSwipeScreen extends StatefulWidget {
 class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
   final AppinioSwiperController _swiperController = AppinioSwiperController();
   bool _isFinished = false;
+  bool _isLoadingInitial = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      Provider.of<AttendanceProvider>(context, listen: false)
-          .loadDailyAttendance(widget.classId, DateTime.now());
+      _loadData();
     });
+  }
+
+  Future<void> _loadData() async {
+    final attendanceProv =
+        Provider.of<AttendanceProvider>(context, listen: false);
+    final justificationProv =
+        Provider.of<AbsenceJustificationProvider>(context, listen: false);
+    final authProv = Provider.of<AuthProvider>(context, listen: false);
+    final today = DateTime.now();
+
+    setState(() => _isLoadingInitial = true);
+
+    try {
+      await Future.wait([
+        attendanceProv.loadDailyAttendance(widget.classId, today),
+        justificationProv.loadJustifications(
+          authProvider: authProv,
+          classId: widget.classId,
+          date: today,
+          silent: true,
+        ),
+      ]);
+    } catch (e) {
+      debugPrint("Erro ao carregar dados da tela de swipe: $e");
+    } finally {
+      if (mounted) setState(() => _isLoadingInitial = false);
+    }
   }
 
   void _onSwipeEnd(
@@ -54,8 +83,12 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
       case Swipe():
         HapticFeedback.lightImpact();
         if (activity.direction == AxisDirection.right) {
+          // Swipe para Presente
           provider.updateStudentStatus(student.studentId, 'PRESENT');
         } else if (activity.direction == AxisDirection.left) {
+          // Swipe para Falta
+          // CORREÇÃO: Registra a falta normalmente, mesmo se o aluno tiver atestado.
+          // A presença física é o que importa no diário. O abono é gerido pelo backend.
           provider.updateStudentStatus(student.studentId, 'ABSENT');
         }
         break;
@@ -73,8 +106,10 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
   @override
   Widget build(BuildContext context) {
     final attendanceProvider = Provider.of<AttendanceProvider>(context);
+    final justificationProv =
+        Provider.of<AbsenceJustificationProvider>(context);
+
     final sheet = attendanceProvider.currentSheet;
-    final isLoading = attendanceProvider.isLoading;
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
@@ -106,23 +141,23 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
           ],
         ),
       ),
-      body: isLoading
+      body: _isLoadingInitial || attendanceProvider.isLoading
           ? const Center(
               child: CircularProgressIndicator(color: Color(0xFF00A859)))
           : sheet == null || sheet.records.isEmpty
               ? _buildEmptyState(textColor, subTextColor)
               : _isFinished
                   ? _buildSummaryView(attendanceProvider, isDark, textColor)
-                  : _buildSwipeView(sheet.records, isDark, subTextColor),
+                  : _buildSwipeView(
+                      sheet.records, isDark, subTextColor, justificationProv),
     );
   }
 
-  Widget _buildSwipeView(
-      List<AttendanceRecord> records, bool isDark, Color? subTextColor) {
+  Widget _buildSwipeView(List<AttendanceRecord> records, bool isDark,
+      Color? subTextColor, AbsenceJustificationProvider justificationProv) {
     return Column(
       children: [
         SizedBox(height: 10.h),
-        // Dica visual
         Container(
           padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 6.h),
           decoration: BoxDecoration(
@@ -140,13 +175,10 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
           ),
         ),
         SizedBox(height: 20.h),
-
-        // Área dos Cards
         SizedBox(
           height: 480.h,
           child: Padding(
-            padding: EdgeInsets.symmetric(
-                horizontal: 24.w), // Aumentei margem lateral
+            padding: EdgeInsets.symmetric(horizontal: 24.w),
             child: AppinioSwiper(
               controller: _swiperController,
               cardCount: records.length,
@@ -154,15 +186,20 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
               onEnd: _onEnd,
               swipeOptions: const SwipeOptions.only(left: true, right: true),
               cardBuilder: (BuildContext context, int index) {
-                return _StudentCard(student: records[index], isDark: isDark);
+                final student = records[index];
+                final justification = justificationProv.findForStudentOnDate(
+                    student.studentId, DateTime.now());
+                return _StudentCard(
+                  student: student,
+                  isDark: isDark,
+                  hasAtestado: justification?.isApproved == true,
+                  endDate: justification?.coverageEndDate,
+                );
               },
             ),
           ),
         ),
-
         const Spacer(),
-
-        // Botões de Ação
         Padding(
           padding: EdgeInsets.symmetric(horizontal: 40.w),
           child: Row(
@@ -185,8 +222,6 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
             ],
           ),
         ),
-
-        // Espaço extra para o menu não cobrir
         SizedBox(height: 90.h),
       ],
     );
@@ -350,7 +385,6 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
                     borderRadius: BorderRadius.circular(16.r)),
               ),
               onPressed: () async {
-                // [NOVO] Integração com o Modal Elegante de Salvamento
                 final success = await showAttendanceOperationDialog(
                   context: context,
                   operation: () async {
@@ -360,9 +394,13 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
                           provider.error ?? "Ocorreu um erro desconhecido.");
                     }
                   },
+                  loadingTitle: 'Salvando Diário',
+                  loadingMessage: 'Enviando chamada da turma...',
+                  successTitle: 'Chamada Salva!',
+                  successMessage:
+                      'O diário de frequência foi registrado com sucesso.',
                 );
 
-                // Se o diálogo retornar sucesso (true), fecha a tela de chamada
                 if (success == true && mounted) {
                   widget.onBack();
                 }
@@ -406,20 +444,27 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
   }
 }
 
-// --- WIDGET DO CARTÃO MELHORADO ---
 class _StudentCard extends StatelessWidget {
   final AttendanceRecord student;
   final bool isDark;
+  final bool hasAtestado;
+  final DateTime? endDate;
 
-  const _StudentCard({required this.student, required this.isDark});
+  const _StudentCard({
+    required this.student,
+    required this.isDark,
+    this.hasAtestado = false,
+    this.endDate,
+  });
 
   @override
   Widget build(BuildContext context) {
     final cardBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
     final textColor = isDark ? Colors.white : const Color(0xFF1F2937);
-    final borderColor = isDark ? Colors.grey[800]! : Colors.grey[200]!;
+    final borderColor = hasAtestado
+        ? const Color(0xFF2F80FF).withOpacity(0.6)
+        : (isDark ? Colors.grey[800]! : Colors.grey[200]!);
 
-    // Lógica para diminuir a fonte se o nome for muito grande
     final double nameFontSize = student.studentName.length > 25 ? 22.sp : 26.sp;
 
     return Container(
@@ -428,17 +473,18 @@ class _StudentCard extends StatelessWidget {
         color: cardBg,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
+            color: hasAtestado
+                ? const Color(0xFF2F80FF).withOpacity(0.2)
+                : Colors.black.withOpacity(isDark ? 0.3 : 0.08),
             blurRadius: 30,
             offset: const Offset(0, 15),
           ),
         ],
-        border: Border.all(color: borderColor, width: 1),
+        border: Border.all(color: borderColor, width: hasAtestado ? 2 : 1),
       ),
       child: Stack(
-        alignment: Alignment.center, // Centraliza tudo por padrão
+        alignment: Alignment.center,
         children: [
-          // Background Gradient (Topo)
           Positioned(
             top: 0,
             left: 0,
@@ -451,20 +497,50 @@ class _StudentCard extends StatelessWidget {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    const Color(0xFF00A859).withOpacity(0.05),
+                    hasAtestado
+                        ? const Color(0xFF2F80FF).withOpacity(0.1)
+                        : const Color(0xFF00A859).withOpacity(0.05),
                     cardBg.withOpacity(0),
                   ],
                 ),
               ),
             ),
           ),
-
-          // Conteúdo Central
+          if (hasAtestado)
+            Positioned(
+              top: 24.h,
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2F80FF).withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                      color: const Color(0xFF2F80FF).withOpacity(0.5)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(PhosphorIcons.file_text_fill,
+                        color: const Color(0xFF2F80FF), size: 16.sp),
+                    SizedBox(width: 6.w),
+                    Text(
+                      endDate != null
+                          ? "Atestado até ${DateFormat('dd/MM').format(endDate!)}"
+                          : "Atestado Vigente",
+                      style: GoogleFonts.inter(
+                        color: const Color(0xFF2F80FF),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13.sp,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Avatar
               Container(
                 width: 150.w,
                 height: 150.w,
@@ -472,11 +548,15 @@ class _StudentCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                      color: const Color(0xFF00A859).withOpacity(0.2),
+                      color: hasAtestado
+                          ? const Color(0xFF2F80FF).withOpacity(0.4)
+                          : const Color(0xFF00A859).withOpacity(0.2),
                       width: 2),
                   boxShadow: [
                     BoxShadow(
-                        color: const Color(0xFF00A859).withOpacity(0.1),
+                        color: hasAtestado
+                            ? const Color(0xFF2F80FF).withOpacity(0.2)
+                            : const Color(0xFF00A859).withOpacity(0.1),
                         blurRadius: 20,
                         offset: const Offset(0, 10))
                   ],
@@ -496,18 +576,16 @@ class _StudentCard extends StatelessWidget {
                           style: GoogleFonts.inter(
                               fontSize: 50.sp,
                               fontWeight: FontWeight.bold,
-                              color: const Color(0xFF00A859)),
+                              color: hasAtestado
+                                  ? const Color(0xFF2F80FF)
+                                  : const Color(0xFF00A859)),
                         )
                       : null,
                 ),
               ),
-
               SizedBox(height: 35.h),
-
-              // Nome do Aluno (Em container de altura fixa para evitar pulos)
               SizedBox(
-                height:
-                    70.h, // Altura fixa reservada para até 2 linhas de texto
+                height: 70.h,
                 child: Center(
                   child: Padding(
                     padding: EdgeInsets.symmetric(horizontal: 20.w),
@@ -517,24 +595,21 @@ class _StudentCard extends StatelessWidget {
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.inter(
-                        fontSize: nameFontSize, // Tamanho dinâmico
+                        fontSize: nameFontSize,
                         fontWeight: FontWeight.bold,
                         color: textColor,
-                        height: 1.1, // Altura da linha um pouco mais justa
+                        height: 1.1,
                       ),
                     ),
                   ),
                 ),
               ),
-
               SizedBox(height: 10.h),
-
-              // ID / Matrícula
               Container(
                 padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 6.h),
                 decoration: BoxDecoration(
                   color: isDark ? Colors.black38 : Colors.grey[100],
-                  borderRadius: BorderRadius.circular(20.r), // Mais arredondado
+                  borderRadius: BorderRadius.circular(20.r),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,

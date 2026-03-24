@@ -2,8 +2,10 @@
 import 'dart:convert';
 import 'package:academyhub_mobile/model/enrollment_model.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+// import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
+
+import 'package:academyhub_mobile/config/api_client.dart';
 
 class EnrollmentService {
   final String _baseUrl = '${ApiConfig.apiUrl}/enrollments'; // Rota base
@@ -31,7 +33,7 @@ class EnrollmentService {
     debugPrint('[EnrollmentService.create] Enviando: $body');
     try {
       final response =
-          await http.post(url, headers: _getHeaders(token), body: body);
+          await ApiClient.post(url, headers: _getHeaders(token), body: body);
       // Tratamento de erro específico para UTF-8
       final String responseBody = utf8.decode(response.bodyBytes);
       final responseData = json.decode(responseBody);
@@ -57,7 +59,7 @@ class EnrollmentService {
     final url = Uri.parse(_baseUrl).replace(queryParameters: filter);
     debugPrint('[EnrollmentService.get] Buscando em: $url');
     try {
-      final response = await http.get(url, headers: _getHeaders(token));
+      final response = await ApiClient.get(url, headers: _getHeaders(token));
       // Tratamento de erro específico para UTF-8
       final String responseBody = utf8.decode(response.bodyBytes);
       final responseData = json.decode(responseBody);
@@ -83,7 +85,7 @@ class EnrollmentService {
       Map<String, dynamic> updateData, String token) async {
     final url = Uri.parse('$_baseUrl/$enrollmentId');
     try {
-      final response = await http.patch(
+      final response = await ApiClient.patch(
         url,
         headers: _getHeaders(token),
         body: json.encode(updateData),
@@ -110,7 +112,7 @@ class EnrollmentService {
   Future<void> deleteEnrollment(String enrollmentId, String token) async {
     final url = Uri.parse('$_baseUrl/$enrollmentId');
     try {
-      final response = await http.delete(url, headers: _getHeaders(token));
+      final response = await ApiClient.delete(url, headers: _getHeaders(token));
       if (response.statusCode == 200 || response.statusCode == 204) {
         return; // Sucesso
       } else {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:academyhub_mobile/config/api_config.dart';
+import 'package:academyhub_mobile/screens/loginPage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,13 +12,17 @@ import '../services/auth_service.dart';
 import '../services/auth_student_service.dart';
 import 'school_provider.dart';
 
-// [NOVO] Imports dos Providers que precisam ser limpos no logout
+// Imports dos Providers que precisam ser limpos no logout
 import 'package:academyhub_mobile/providers/class_provider.dart';
 import 'package:academyhub_mobile/providers/student_provider.dart';
 import 'package:academyhub_mobile/providers/horario_provider.dart';
 import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
 import 'package:academyhub_mobile/providers/user_provider.dart';
 import 'package:academyhub_mobile/providers/report_card_provider.dart';
+
+// [NOVO] Imports para a navegação global forçada
+import '../services/navigation_service.dart';
+// import '../screens/auth/login_screen.dart'; // Ajuste este caminho para a sua tela de Login real
 
 class AuthProvider with ChangeNotifier {
   final AuthService _authService = AuthService();
@@ -37,7 +42,7 @@ class AuthProvider with ChangeNotifier {
       (_user?.roles.contains('Student') ?? false);
 
   // =================================================================
-  // [NOVO] FUNÇÃO GLOBAL PARA LIMPEZA DE CACHE DOS PROVIDERS
+  // FUNÇÃO GLOBAL PARA LIMPEZA DE CACHE DOS PROVIDERS
   // =================================================================
   static void clearAppCache(BuildContext context) {
     debugPrint(
@@ -218,15 +223,18 @@ class AuthProvider with ChangeNotifier {
   }
 
   // =================================================================
-  // [AJUSTADO] FUNÇÃO DE LOGOUT
+  // [AJUSTADO] FUNÇÃO DE LOGOUT COM REDIRECIONAMENTO GLOBAL
   // =================================================================
   Future<void> logout([BuildContext? context]) async {
-    // 1. Limpa o cache dos providers em memória (se o context foi passado)
-    if (context != null && context.mounted) {
-      clearAppCache(context);
+    // 1. Tenta limpar o cache dos providers usando o context passado ou o global
+    final activeContext =
+        context ?? NavigationService.navigatorKey.currentContext;
+
+    if (activeContext != null && activeContext.mounted) {
+      clearAppCache(activeContext);
     } else {
       debugPrint(
-          '⚠️ [AuthProvider] Context não fornecido ao logout. Cache local pode não ter sido limpo.');
+          '⚠️ [AuthProvider] Nenhum Context válido encontrado. Cache local em memória pode não ter sido limpo.');
     }
 
     // 2. Apaga as variáveis locais da sessão
@@ -244,8 +252,21 @@ class AuthProvider with ChangeNotifier {
     debugPrint(
         '🗑️ [AuthProvider] Sessão encerrada e dados removidos do SharedPreferences.');
 
-    // 4. Avisa a UI para redesenhar e jogar para tela de login
+    // 4. Avisa a UI para redesenhar variáveis que dependam de autenticação
     notifyListeners();
+
+    // 5. O PULO DO GATO: Força o redirecionamento global e apaga o histórico de navegação
+    if (NavigationService.navigatorKey.currentState != null) {
+      debugPrint('🚪 [AuthProvider] Redirecionando para a tela de Login...');
+      NavigationService.navigatorKey.currentState!.pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const Loginpage()),
+        (Route<dynamic> route) =>
+            false, // Remove todas as telas anteriores da pilha
+      );
+    } else {
+      debugPrint(
+          '❌ [AuthProvider] navigatorKey.currentState está NULO. Não foi possível redirecionar.');
+    }
   }
 
   Future<bool> tryAutoLogin(BuildContext context) async {

@@ -2,8 +2,9 @@
 import 'dart:convert';
 import 'package:academyhub_mobile/model/horario_model.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+// import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
+import 'package:academyhub_mobile/config/api_client.dart';
 
 class HorarioService {
   final String _baseUrl = '${ApiConfig.apiUrl}/horarios';
@@ -22,7 +23,7 @@ class HorarioService {
     final url = Uri.parse(_baseUrl).replace(queryParameters: filter);
     debugPrint('[HorarioService.get] Buscando em: $url');
     try {
-      final response = await http.get(url, headers: _getHeaders(token));
+      final response = await ApiClient.get(url, headers: _getHeaders(token));
       final responseData = json.decode(utf8.decode(response.bodyBytes));
 
       if (response.statusCode == 200) {
@@ -60,7 +61,7 @@ class HorarioService {
   Future<HorarioModel> createHorario(HorarioModel horario, String token) async {
     final url = Uri.parse(_baseUrl);
     try {
-      final response = await http.post(
+      final response = await ApiClient.post(
         url,
         headers: _getHeaders(token),
         body: json.encode(
@@ -88,7 +89,7 @@ class HorarioService {
       String horarioId, Map<String, dynamic> updateData, String token) async {
     final url = Uri.parse('$_baseUrl/$horarioId');
     try {
-      final response = await http.patch(
+      final response = await ApiClient.patch(
         url,
         headers: _getHeaders(token),
         body: json.encode(updateData),
@@ -114,7 +115,7 @@ class HorarioService {
   Future<void> deleteHorario(String horarioId, String token) async {
     final url = Uri.parse('$_baseUrl/$horarioId');
     try {
-      final response = await http.delete(url, headers: _getHeaders(token));
+      final response = await ApiClient.delete(url, headers: _getHeaders(token));
 
       if (response.statusCode == 200 || response.statusCode == 204) {
         return; // Sucesso

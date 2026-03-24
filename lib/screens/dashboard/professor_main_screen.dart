@@ -11,9 +11,13 @@ import 'package:academyhub_mobile/widgets/custom_bottom_menu.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
+
+// [IMPORTANTE] Imports dos Providers e Telas Novas
+import 'package:academyhub_mobile/providers/class_provider.dart';
+// import 'package:academyhub_mobile/providers/enrollment_provider.dart'; // <-- Certifique-se que o caminho está correto
+import 'package:academyhub_mobile/screens/teacher/student_management_screens.dart'; // O novo arquivo de gestão de alunos
 
 class ProfessorMainScreen extends StatefulWidget {
   const ProfessorMainScreen({super.key});
@@ -24,7 +28,8 @@ class ProfessorMainScreen extends StatefulWidget {
 
 class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
   static const int _homeIndex = 0;
-  static const int _studentsIndex = 1;
+  static const int _studentsIndex =
+      1; // 1. Módulo Principal de Alunos (Tela de Pastas)
   static const int _classesIndex = 2;
   static const int _settingsIndex = 3;
 
@@ -124,7 +129,9 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
     return _currentIndex == _myDataIndex ||
         _currentIndex == _attendanceClassSelectionIndex ||
         _currentIndex == _attendanceSwipeIndex ||
-        _currentIndex == _reportCardsIndex;
+        _currentIndex == _reportCardsIndex ||
+        _currentIndex ==
+            _studentsIndex; // Escondemos aqui pois o módulo de alunos tem Header próprio
   }
 
   int _bottomMenuSelectedIndex() {
@@ -139,51 +146,7 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
 
   PreferredSizeWidget? _buildAppBar(BuildContext context) {
     if (_shouldHideAppBar()) return null;
-
-    // return AppBar(
-    //   elevation: 0,
-    //   scrolledUnderElevation: 0,
-    //   backgroundColor: Colors.transparent,
-    //   centerTitle: true,
-    //   automaticallyImplyLeading: false,
-    //   flexibleSpace: ClipRect(
-    //     child: BackdropFilter(
-    //       filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-    //       child: Container(
-    //         color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.6),
-    //       ),
-    //     ),
-    //   ),
-    //   title: SvgPicture.asset(
-    //     'lib/assets/LogoAcademy.svg',
-    //     height: 28.h,
-    //   ),
-    //   actions: [
-    //     Center(
-    //       child: Container(
-    //         margin: EdgeInsets.only(right: 20.w),
-    //         width: 10.w,
-    //         height: 10.w,
-    //         decoration: BoxDecoration(
-    //           color: _socketStatus == WebSocketStatus.connected
-    //               ? Colors.green
-    //               : Colors.red,
-    //           shape: BoxShape.circle,
-    //           boxShadow: [
-    //             BoxShadow(
-    //               color: (_socketStatus == WebSocketStatus.connected
-    //                       ? Colors.green
-    //                       : Colors.red)
-    //                   .withOpacity(0.4),
-    //               blurRadius: 4,
-    //               spreadRadius: 2,
-    //             ),
-    //           ],
-    //         ),
-    //       ),
-    //     ),
-    //   ],
-    // );
+    return null;
   }
 
   @override
@@ -206,15 +169,28 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
             child: IndexedStack(
               index: _currentIndex,
               children: [
+                // 0: Home
                 const TeacherDashboardView(),
-                const Center(child: Text("Tela de Alunos (Em breve)")),
+
+                // 1: Módulo de Gestão de Alunos (NOVO FLUXO 100% ISOLADO)
+                const StudentManagementEntryScreen(),
+
+                // 2: Turmas
                 const Center(child: Text("Tela de Turmas (Em breve)")),
+
+                // 3: Settings
                 const SharedSettingsView(),
+
+                // 4: Meus Dados
                 const Center(child: Text("Tela de Meus Dados (Em breve)")),
+
+                // 5: Frequência -> Seleção de Turma Original
                 ClassSelectionScreen(
                   onBack: () => _onTabTapped(_homeIndex),
                   onClassSelected: _navigateToAttendanceSwipe,
                 ),
+
+                // 6: Frequência -> Tela de Swipe
                 _selectedClassId != null
                     ? AttendanceSwipeScreen(
                         classId: _selectedClassId!,
@@ -222,6 +198,8 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
                         onBack: _backToClassSelection,
                       )
                     : const Center(child: CircularProgressIndicator()),
+
+                // 7: Boletins
                 const ScreenReportCards(),
               ],
             ),
