@@ -1,4 +1,4 @@
-import 'package:academyhub_mobile/attendance/attendance_swipe_screen.dart';
+import 'package:academyhub_mobile/attendance/attendance_history_screen.dart';
 import 'package:academyhub_mobile/model/class_model.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
@@ -179,6 +179,20 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     if (mounted) {
       setState(() => _isCheckingAttendance = false);
     }
+  }
+
+  Future<void> _openAttendanceHistory(ClassModel turma) async {
+    final classId = turma.id;
+    if (classId == null || classId.isEmpty) return;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AttendanceHistoryScreen(
+          classId: classId,
+          className: turma.name,
+        ),
+      ),
+    );
   }
 
   List<ClassModel> _getAvailableClasses(
@@ -620,6 +634,37 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                  SizedBox(height: 8.h),
+                  TextButton.icon(
+                    onPressed: turma.id == null
+                        ? null
+                        : () => _openAttendanceHistory(turma),
+                    style: TextButton.styleFrom(
+                      foregroundColor: const Color(0xFF1F5C9F),
+                      backgroundColor:
+                          const Color(0xFF1F5C9F).withOpacity(0.10),
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 14.w,
+                        vertical: 10.h,
+                      ),
+                      minimumSize: Size(118.w, 40.h),
+                      tapTargetSize: MaterialTapTargetSize.padded,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20.r),
+                      ),
+                    ),
+                    icon: Icon(
+                      PhosphorIcons.clock_counter_clockwise,
+                      size: 16.sp,
+                    ),
+                    label: Text(
+                      'Histórico',
+                      style: GoogleFonts.inter(
+                        fontSize: 12.sp,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   SizedBox(height: 12.h),

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:academyhub_mobile/model/class_model.dart';
+import 'package:academyhub_mobile/model/attendance_model.dart';
 import 'package:academyhub_mobile/providers/attendance_provider.dart';
 import 'package:academyhub_mobile/services/websocket.dart';
 import 'package:flutter/material.dart';
@@ -217,13 +218,12 @@ class _SidebarHistory extends StatelessWidget {
     final surfaceColor = isDark ? kSurfaceDark : kSurfaceLight;
     final textColor = isDark ? kTextWhite : Colors.black87;
 
-    final monthHistory = provider.history.where((item) {
-      final d = DateTime.parse(item['date']);
+    final monthHistory = provider.history.where((sheet) {
+      final d = sheet.date;
       return d.month == viewMonth.month && d.year == viewMonth.year;
     }).toList();
 
-    monthHistory.sort((a, b) =>
-        DateTime.parse(b['date']).compareTo(DateTime.parse(a['date'])));
+    monthHistory.sort((a, b) => b.date.compareTo(a.date));
 
     return Container(
       width: 320.w,
@@ -313,7 +313,7 @@ class _SidebarHistory extends StatelessWidget {
                     itemCount: monthHistory.length,
                     itemBuilder: (context, index) {
                       final item = monthHistory[index];
-                      final date = DateTime.parse(item['date']);
+                      final date = item.date;
                       final isSelected =
                           DateUtils.isSameDay(date, selectedDate);
 
@@ -683,7 +683,7 @@ class _StudentHistoryModal extends StatelessWidget {
   final String studentId;
   final String studentName;
   final String? studentPhoto;
-  final List<dynamic> classHistory;
+  final List<AttendanceSheet> classHistory;
 
   const _StudentHistoryModal({
     super.key,
@@ -698,206 +698,241 @@ class _StudentHistoryModal extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bgColor = isDark ? kSurfaceDark : Colors.white;
     final textColor = isDark ? kTextWhite : Colors.black87;
+    final textMuted = isDark ? kTextGrey : Colors.grey[600]!;
 
-    debugPrint("\n========================================");
-    debugPrint("🔍 DIAGNÓSTICO: ALUNO $studentName (ID: $studentId)");
-    debugPrint("📂 Tamanho do Histórico recebido: ${classHistory.length} dias");
+    final orderedHistory = List<AttendanceSheet>.from(classHistory)
+      ..sort((a, b) => b.date.compareTo(a.date));
 
     int totalClasses = 0;
     int presentCount = 0;
-    List<DateTime> absenceDates = [];
+    final absenceDates = <DateTime>[];
 
-    for (var dayRecord in classHistory) {
-      if (!dayRecord.containsKey('records')) {
-        debugPrint("❌ ERRO CRÍTICO: Chave 'records' não encontrada.");
-        continue;
-      }
-      final rawRecords = dayRecord['records'];
-      if (rawRecords is! List) continue;
+    for (final dayRecord in orderedHistory) {
+      final studentRecord = dayRecord.recordForStudent(studentId);
+      if (studentRecord == null) continue;
 
-      final studentRecord = rawRecords.firstWhere(
-        (r) => r['studentId'].toString() == studentId.toString(),
-        orElse: () => null,
-      );
-
-      if (studentRecord != null) {
-        totalClasses++;
-        final status =
-            studentRecord['status']?.toString().toUpperCase() ?? 'ABSENT';
-
-        if (status == 'PRESENT') {
-          presentCount++;
-        } else {
-          if (dayRecord['date'] != null) {
-            absenceDates.add(DateTime.parse(dayRecord['date']));
-          }
-        }
+      totalClasses++;
+      if (studentRecord.isPresent) {
+        presentCount++;
+      } else {
+        absenceDates.add(dayRecord.date);
       }
     }
 
+    absenceDates.sort((a, b) => b.compareTo(a));
+
     final double frequency =
         totalClasses == 0 ? 0.0 : (presentCount / totalClasses);
-    final int percentage = (frequency * 100).toInt();
+    final int percentage = (frequency * 100).round();
 
     return Dialog(
       backgroundColor: bgColor,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Container(
-        width: 450.w,
-        padding: EdgeInsets.all(24.w),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 24.sp,
-                  backgroundImage:
-                      studentPhoto != null ? NetworkImage(studentPhoto!) : null,
-                  backgroundColor: isDark
-                      ? Colors.white.withOpacity(0.05)
-                      : Colors.grey[200],
-                  child: studentPhoto == null
-                      ? Text(studentName[0],
-                          style: GoogleFonts.inter(
-                              fontWeight: FontWeight.bold, color: Colors.grey))
-                      : null,
-                ),
-                SizedBox(width: 16.w),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+      child: FractionallySizedBox(
+        widthFactor: 0.95,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: 620.h),
+          child: Padding(
+            padding: EdgeInsets.all(24.w),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text(studentName,
-                          style: GoogleFonts.inter(
-                              fontSize: 18.sp,
-                              fontWeight: FontWeight.bold,
-                              color: textColor)),
-                      Text("Relatório Individual",
-                          style: GoogleFonts.inter(
-                              fontSize: 12.sp, color: kTextGrey)),
+                      CircleAvatar(
+                        radius: 24.sp,
+                        backgroundImage: studentPhoto != null
+                            ? NetworkImage(studentPhoto!)
+                            : null,
+                        backgroundColor: isDark
+                            ? Colors.white.withOpacity(0.05)
+                            : Colors.grey[200],
+                        child: studentPhoto == null
+                            ? Text(
+                                studentName.isNotEmpty ? studentName[0] : '?',
+                                style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.grey,
+                                ),
+                              )
+                            : null,
+                      ),
+                      SizedBox(width: 16.w),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              studentName,
+                              style: GoogleFonts.inter(
+                                fontSize: 18.sp,
+                                fontWeight: FontWeight.bold,
+                                color: textColor,
+                              ),
+                            ),
+                            Text(
+                              'Relatório Individual',
+                              style: GoogleFonts.inter(
+                                fontSize: 12.sp,
+                                color: textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(PhosphorIcons.x, color: kTextGrey),
+                        onPressed: () => Navigator.pop(context),
+                      )
                     ],
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(PhosphorIcons.x, color: kTextGrey),
-                  onPressed: () => Navigator.pop(context),
-                )
-              ],
-            ),
-            SizedBox(height: 24.h),
-            Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    padding: EdgeInsets.all(12.w),
-                    decoration: BoxDecoration(
-                      color: (percentage >= 75 ? kSuccessColor : kErrorColor)
-                          .withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                          color:
-                              (percentage >= 75 ? kSuccessColor : kErrorColor)
-                                  .withOpacity(0.2)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text("$percentage%",
-                            style: GoogleFonts.inter(
-                                fontSize: 24.sp,
-                                fontWeight: FontWeight.bold,
-                                color: percentage >= 75
-                                    ? kSuccessColor
-                                    : kErrorColor)),
-                        Text("Frequência",
-                            style: GoogleFonts.inter(
-                                fontSize: 12.sp, color: kTextGrey)),
-                      ],
-                    ),
-                  ),
-                ),
-                SizedBox(width: 12.w),
-                Expanded(
-                  child: Container(
-                    padding: EdgeInsets.all(12.w),
-                    decoration: BoxDecoration(
-                      color: kAccentOrange.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: kAccentOrange.withOpacity(0.2)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text("${absenceDates.length}",
-                            style: GoogleFonts.inter(
-                                fontSize: 24.sp,
-                                fontWeight: FontWeight.bold,
-                                color: kAccentOrange)),
-                        Text("Total de Faltas",
-                            style: GoogleFonts.inter(
-                                fontSize: 12.sp, color: kTextGrey)),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SizedBox(height: 24.h),
-            Text("Histórico de Ausências",
-                style: GoogleFonts.inter(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14.sp,
-                    color: textColor)),
-            SizedBox(height: 12.h),
-            Container(
-              height: 150.h,
-              decoration: BoxDecoration(
-                  color: isDark ? kBackgroundDark : Colors.grey[50],
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: isDark
-                          ? Colors.white.withOpacity(0.05)
-                          : Colors.grey[300]!)),
-              child: absenceDates.isEmpty
-                  ? Center(
-                      child: Text("Nenhuma falta registrada.",
-                          style: GoogleFonts.inter(
-                              color: kTextGrey, fontSize: 12.sp)))
-                  : ListView.builder(
-                      padding: EdgeInsets.all(8.w),
-                      itemCount: absenceDates.length,
-                      itemBuilder: (context, index) {
-                        final date = absenceDates[index];
-                        return Container(
-                          margin: EdgeInsets.only(bottom: 8.h),
-                          padding: EdgeInsets.symmetric(
-                              horizontal: 12.w, vertical: 8.h),
+                  SizedBox(height: 20.h),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Container(
+                          padding: EdgeInsets.all(12.w),
                           decoration: BoxDecoration(
-                              color: kErrorColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(
-                                  color: kErrorColor.withOpacity(0.2))),
-                          child: Row(
+                            color:
+                                (percentage >= 75 ? kSuccessColor : kErrorColor)
+                                    .withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: (percentage >= 75
+                                      ? kSuccessColor
+                                      : kErrorColor)
+                                  .withOpacity(0.20),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(PhosphorIcons.calendar_x,
-                                  size: 16, color: kErrorColor),
-                              SizedBox(width: 8.w),
                               Text(
-                                DateFormat("dd 'de' MMMM", "pt_BR")
-                                    .format(date),
+                                '$percentage%',
                                 style: GoogleFonts.inter(
-                                    color: kErrorColor,
-                                    fontWeight: FontWeight.w600),
+                                  fontSize: 24.sp,
+                                  fontWeight: FontWeight.bold,
+                                  color: percentage >= 75
+                                      ? kSuccessColor
+                                      : kErrorColor,
+                                ),
+                              ),
+                              Text(
+                                'Frequência',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12.sp,
+                                  color: textMuted,
+                                ),
                               ),
                             ],
                           ),
-                        );
-                      },
+                        ),
+                      ),
+                      SizedBox(width: 12.w),
+                      Expanded(
+                        child: Container(
+                          padding: EdgeInsets.all(12.w),
+                          decoration: BoxDecoration(
+                            color: kAccentOrange.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                                color: kAccentOrange.withOpacity(0.20)),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${absenceDates.length}',
+                                style: GoogleFonts.inter(
+                                  fontSize: 24.sp,
+                                  fontWeight: FontWeight.bold,
+                                  color: kAccentOrange,
+                                ),
+                              ),
+                              Text(
+                                'Total de Faltas',
+                                style: GoogleFonts.inter(
+                                  fontSize: 12.sp,
+                                  color: textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 20.h),
+                  Text(
+                    'Histórico de Ausências',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14.sp,
+                      color: textColor,
                     ),
-            )
-          ],
+                  ),
+                  SizedBox(height: 12.h),
+                  Container(
+                    padding: EdgeInsets.all(12.w),
+                    decoration: BoxDecoration(
+                      color: isDark ? kBackgroundDark : Colors.grey[50],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isDark
+                            ? Colors.white.withOpacity(0.05)
+                            : Colors.grey[300]!,
+                      ),
+                    ),
+                    child: absenceDates.isEmpty
+                        ? Center(
+                            child: Text(
+                              'Nenhuma falta registrada.',
+                              style: GoogleFonts.inter(
+                                color: textMuted,
+                                fontSize: 12.sp,
+                              ),
+                            ),
+                          )
+                        : Column(
+                            children: absenceDates.map((date) {
+                              return Container(
+                                margin: EdgeInsets.only(bottom: 8.h),
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 12.w, vertical: 8.h),
+                                decoration: BoxDecoration(
+                                  color: kErrorColor.withOpacity(0.10),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                      color: kErrorColor.withOpacity(0.20)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      PhosphorIcons.calendar_x,
+                                      size: 16,
+                                      color: kErrorColor,
+                                    ),
+                                    SizedBox(width: 8.w),
+                                    Text(
+                                      DateFormat("dd 'de' MMMM", "pt_BR")
+                                          .format(date),
+                                      style: GoogleFonts.inter(
+                                        color: kErrorColor,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );

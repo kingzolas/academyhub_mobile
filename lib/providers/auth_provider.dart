@@ -17,6 +17,7 @@ import 'package:academyhub_mobile/providers/class_provider.dart';
 import 'package:academyhub_mobile/providers/student_provider.dart';
 import 'package:academyhub_mobile/providers/horario_provider.dart';
 import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
+import 'package:academyhub_mobile/providers/attendance_provider.dart';
 import 'package:academyhub_mobile/providers/user_provider.dart';
 import 'package:academyhub_mobile/providers/report_card_provider.dart';
 
@@ -53,6 +54,7 @@ class AuthProvider with ChangeNotifier {
       Provider.of<StudentProvider>(context, listen: false).clear();
       Provider.of<HorarioProvider>(context, listen: false).clear();
       Provider.of<AcademicCalendarProvider>(context, listen: false).clear();
+      Provider.of<AttendanceProvider>(context, listen: false).clear();
       Provider.of<UserProvider>(context, listen: false).clear();
       Provider.of<ReportCardProvider>(context, listen: false).clear();
 

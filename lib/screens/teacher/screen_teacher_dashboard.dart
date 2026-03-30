@@ -1,15 +1,17 @@
 // lib/screens/dashboard/teacher_dashboard_view.dart
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:academyhub_mobile/model/horario_model.dart';
 import 'package:academyhub_mobile/model/model_alunos.dart';
 import 'package:academyhub_mobile/model/term_model.dart';
+import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
-import 'package:academyhub_mobile/providers/student_provider.dart';
+import 'package:academyhub_mobile/providers/horario_provider.dart';
 import 'package:academyhub_mobile/services/horario_service.dart';
+import 'package:academyhub_mobile/services/student_service.dart';
 import 'package:academyhub_mobile/services/term_service.dart';
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -27,6 +29,7 @@ class TeacherDashboardView extends StatefulWidget {
 class _TeacherDashboardViewState extends State<TeacherDashboardView>
     with TickerProviderStateMixin {
   final HorarioService _horarioService = HorarioService();
+  final StudentService _studentService = StudentService();
   final TermService _termService = TermService();
 
   late AnimationController _pageController;
@@ -101,8 +104,6 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
 
   Future<void> _fetchDashboardData() async {
     final auth = Provider.of<AuthProvider>(context, listen: false);
-    final studentProvider =
-        Provider.of<StudentProvider>(context, listen: false);
 
     final token = auth.token;
     final user = auth.user;
@@ -118,52 +119,90 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
     }
 
     try {
-      final terms = await _termService.find(token, {});
+      bool isGestor = false;
+      try {
+        final roles = (user.roles as List<dynamic>)
+            .map((e) => e.toString().toLowerCase())
+            .toList();
+        isGestor = roles.contains('admin') ||
+            roles.contains('diretor') ||
+            roles.contains('coordenador') ||
+            roles.contains('administrador');
+      } catch (_) {}
+
+      final academicCalendar =
+          Provider.of<AcademicCalendarProvider>(context, listen: false);
+      final horarioProvider =
+          Provider.of<HorarioProvider>(context, listen: false);
+      final selectedSchoolYearId = academicCalendar.selectedSchoolYear?.id;
+      final termFilter = selectedSchoolYearId != null
+          ? {'schoolYearId': selectedSchoolYearId}
+          : <String, String>{};
+      final horarioFilter =
+          isGestor ? <String, String>{} : {'teacherId': user.id};
+
+      final cachedTerms = academicCalendar.terms;
+      final cachedHorarios = horarioProvider.horarios;
+      final termsMatchSelectedYear = selectedSchoolYearId == null ||
+          cachedTerms
+              .every((term) => term.schoolYearId == selectedSchoolYearId);
+
+      final Future<List<TermModel>> termsFuture =
+          cachedTerms.isNotEmpty && termsMatchSelectedYear
+              ? Future.value(cachedTerms)
+              : _termService.find(token, termFilter);
+
+      final Future<List<HorarioModel>> horariosFuture =
+          cachedHorarios.isNotEmpty
+              ? Future.value(
+                  isGestor
+                      ? cachedHorarios
+                      : cachedHorarios
+                          .where((h) => h.teacherId == user.id)
+                          .toList(),
+                )
+              : _horarioService.getHorarios(
+                  token,
+                  filter: horarioFilter.isEmpty ? null : horarioFilter,
+                );
+
+      final results = await Future.wait([termsFuture, horariosFuture]);
+
+      final terms = results[0] as List<TermModel>;
+      final teacherHorarios = results[1] as List<HorarioModel>;
       final now = DateTime.now();
 
-      TermModel? term = terms.firstWhereOrNull((t) =>
-          (now.isAfter(t.startDate) || _isSameDay(now, t.startDate)) &&
-          (now.isBefore(t.endDate) || _isSameDay(now, t.endDate)));
+      TermModel? term;
+      for (final candidate in terms) {
+        final isWithinRange = (now.isAfter(candidate.startDate) ||
+                _isSameDay(now, candidate.startDate)) &&
+            (now.isBefore(candidate.endDate) ||
+                _isSameDay(now, candidate.endDate));
+        if (isWithinRange) {
+          term = candidate;
+          break;
+        }
+      }
 
       term ??= terms.isNotEmpty ? terms.first : null;
+      _currentTerm = term;
 
       if (term != null) {
-        _currentTerm = term;
-
-        final allHorarios = await _horarioService.getHorarios(token);
-
-        bool isGestor = false;
-        try {
-          final roles = (user.roles as List<dynamic>)
-              .map((e) => e.toString().toLowerCase())
-              .toList();
-          isGestor = roles.contains('admin') ||
-              roles.contains('diretor') ||
-              roles.contains('coordenador') ||
-              roles.contains('administrador');
-        } catch (_) {}
-
-        _allTeacherClasses = allHorarios.where((h) {
-          final termMatch = h.termId == term!.id;
-          final teacherMatch = isGestor || h.teacherId == user.id;
-          return termMatch && teacherMatch;
-        }).toList();
-
-        _processScheduleLogic();
+        _allTeacherClasses =
+            teacherHorarios.where((h) => h.termId == term!.id).toList();
       } else {
+        _allTeacherClasses = teacherHorarios;
         _loadingMessage = "Nenhum período letivo ativo.";
       }
 
-      if (studentProvider.students.isEmpty) {
-        await studentProvider.fetchStudents(token);
-      }
-
-      _processBirthdays(studentProvider.students);
+      _processScheduleLogic();
 
       if (mounted) {
         setState(() => _isLoading = false);
         _pageController.forward();
       }
+
+      unawaited(_loadBirthdays(token));
     } catch (e) {
       debugPrint("Erro dashboard professor: $e");
       if (mounted) {
@@ -172,6 +211,19 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
           _loadingMessage = "Erro ao carregar dados.";
         });
       }
+    }
+  }
+
+  Future<void> _loadBirthdays(String token) async {
+    try {
+      final birthdays = await _studentService.getUpcomingBirthdays(token);
+      if (!mounted) return;
+      _processBirthdays(birthdays);
+      if (mounted) {
+        setState(() {});
+      }
+    } catch (e) {
+      debugPrint("Erro ao carregar aniversariantes do professor: $e");
     }
   }
 

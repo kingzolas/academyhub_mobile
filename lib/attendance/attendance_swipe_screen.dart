@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
+import 'attendance_history_screen.dart';
 import '../../model/attendance_model.dart';
 import '../../providers/attendance_provider.dart';
 import '../../providers/absence_justification_provider.dart';
@@ -140,6 +141,26 @@ class _AttendanceSwipeScreenState extends State<AttendanceSwipeScreen> {
                     fontSize: 12.sp)),
           ],
         ),
+        actions: [
+          IconButton(
+            tooltip: 'Ver histórico',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AttendanceHistoryScreen(
+                    classId: widget.classId,
+                    className: widget.className,
+                  ),
+                ),
+              );
+            },
+            icon: Icon(
+              PhosphorIcons.clock_counter_clockwise,
+              color: textColor,
+              size: 24.sp,
+            ),
+          ),
+        ],
       ),
       body: _isLoadingInitial || attendanceProvider.isLoading
           ? const Center(
