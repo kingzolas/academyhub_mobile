@@ -13,6 +13,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
   // Ações de Staff/Professor
   final VoidCallback onNavigateToAttendance;
   final VoidCallback onNavigateToStaff;
+  final VoidCallback? onNavigateToActivities;
 
   // Ação do Scanner de Provas
   final VoidCallback? onNavigateToScanner;
@@ -33,6 +34,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
     required this.onTabSelected,
     required this.onNavigateToStaff,
     required this.onNavigateToAttendance,
+    this.onNavigateToActivities,
     this.onNavigateToScanner,
     this.onNavigateToReportCards,
     this.onStudentAction1,
@@ -150,11 +152,11 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
         _RadialMenuAction(
           angle: 25, // Extrema Direita
           distance: 140.h,
-          icon: PhosphorIcons.identification_card_fill,
-          label: 'Meus\nDados',
+          icon: PhosphorIcons.notepad_fill,
+          label: 'Atividades',
           color: Colors.white,
           iconColor: Colors.blueAccent,
-          onTap: widget.onNavigateToStaff,
+          onTap: widget.onNavigateToActivities ?? widget.onNavigateToStaff,
           isBig: true,
         ),
       ];

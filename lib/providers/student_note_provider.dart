@@ -40,6 +40,7 @@ class StudentNoteProvider extends ChangeNotifier {
   Future<void> loadNotes(AuthProvider authProvider, String studentId) async {
     _isLoading = true;
     _errorMessage = null;
+    _notes = [];
     notifyListeners();
 
     try {

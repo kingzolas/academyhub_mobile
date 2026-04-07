@@ -1,7 +1,7 @@
-// lib/services/student_note_service.dart
-
 import 'dart:convert';
-import 'package:http/http.dart' as http;
+
+import 'package:academyhub_mobile/config/api_client.dart';
+
 import '../config/api_config.dart';
 import '../model/student_note_model.dart';
 
@@ -10,42 +10,44 @@ class StudentNoteService {
       ? ApiConfig.apiUrl.substring(0, ApiConfig.apiUrl.length - 1)
       : ApiConfig.apiUrl;
 
-  // Busca todas as anotações do aluno
   Future<List<StudentNoteModel>> fetchNotesByStudent(
-      String token, String studentId) async {
+    String token,
+    String studentId,
+  ) async {
     final url = Uri.parse('$_baseUrl/students/$studentId/notes');
 
-    final response = await http.get(
+    final response = await ApiClient.get(
       url,
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
     );
+    final bodyText = utf8.decode(response.bodyBytes);
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      final body = jsonDecode(response.body);
+      final body = jsonDecode(bodyText);
       final data = body['data'] as List?;
       if (data == null) return [];
 
       return data.map((json) => StudentNoteModel.fromJson(json)).toList();
-    } else {
-      throw Exception(
-          _extractErrorMessage(response.body, 'Erro ao carregar anotações.'));
     }
+
+    throw Exception(
+      _extractErrorMessage(bodyText, 'Erro ao carregar anotacoes.'),
+    );
   }
 
-  // Cria uma nova anotação
   Future<StudentNoteModel> createNote({
     required String token,
     required String studentId,
     required String title,
     required String description,
-    required String type, // 'PRIVATE', 'ATTENTION', 'WARNING'
+    required String type,
   }) async {
     final url = Uri.parse('$_baseUrl/students/$studentId/notes');
 
-    final response = await http.post(
+    final response = await ApiClient.post(
       url,
       headers: {
         'Authorization': 'Bearer $token',
@@ -57,34 +59,37 @@ class StudentNoteService {
         'type': type,
       }),
     );
+    final bodyText = utf8.decode(response.bodyBytes);
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      final body = jsonDecode(response.body);
+      final body = jsonDecode(bodyText);
       return StudentNoteModel.fromJson(body['data']);
-    } else {
-      throw Exception(
-          _extractErrorMessage(response.body, 'Erro ao criar anotação.'));
     }
+
+    throw Exception(
+      _extractErrorMessage(bodyText, 'Erro ao criar anotacao.'),
+    );
   }
 
-  // Exclui uma anotação
   Future<void> deleteNote(String token, String noteId) async {
-    final url = Uri.parse('$_baseUrl/notes/$noteId');
+    final url = Uri.parse('$_baseUrl/students/notes/$noteId');
 
-    final response = await http.delete(
+    final response = await ApiClient.delete(
       url,
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
       },
     );
+    final bodyText = utf8.decode(response.bodyBytes);
 
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return;
-    } else {
-      throw Exception(
-          _extractErrorMessage(response.body, 'Erro ao excluir anotação.'));
     }
+
+    throw Exception(
+      _extractErrorMessage(bodyText, 'Erro ao excluir anotacao.'),
+    );
   }
 
   String _extractErrorMessage(String responseBody, String fallback) {

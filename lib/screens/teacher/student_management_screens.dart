@@ -8,12 +8,14 @@ import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 
 // Módulos e Providers Reais
+import '../../model/enrollment_model.dart';
 import '../../model/model_alunos.dart';
 import '../../model/class_model.dart';
 import '../../providers/class_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/student_note_provider.dart';
 import '../../widgets/attendance_operation_dialog.dart';
+import 'teacher_student_profile_screen.dart';
 
 // Providers vitais para extrair alunos e filtrar turmas pelo horário
 import '../../providers/horario_provider.dart';
@@ -272,11 +274,10 @@ class StudentManagementListScreen extends StatefulWidget {
 class _StudentManagementListScreenState
     extends State<StudentManagementListScreen> {
   final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = "";
 
   // Listas locais para evitar que a tela pisque enquanto filtra
-  List<Student> _allStudents = [];
-  List<Student> _filteredStudents = [];
+  List<Enrollment> _allEnrollments = [];
+  List<Enrollment> _filteredEnrollments = [];
   bool _isLoading = true;
 
   @override
@@ -304,15 +305,16 @@ class _StudentManagementListScreenState
     if (!mounted) return;
 
     // 2. Transforma as matrículas ativas em uma lista de alunos
-    final activeStudents =
-        enrollmentProv.enrollments.map((e) => e.student).toList();
+    final activeEnrollments = enrollmentProv.enrollments.toList();
 
     // 3. Coloca em ordem alfabética
-    activeStudents.sort((a, b) => a.fullName.compareTo(b.fullName));
+    activeEnrollments.sort(
+      (a, b) => a.student.fullName.compareTo(b.student.fullName),
+    );
 
     setState(() {
-      _allStudents = activeStudents;
-      _filteredStudents = activeStudents; // Inicialmente, todos aparecem
+      _allEnrollments = activeEnrollments;
+      _filteredEnrollments = activeEnrollments; // Inicialmente, todos aparecem
       _isLoading = false; // Tira a bolinha de carregamento
     });
   }
@@ -320,9 +322,11 @@ class _StudentManagementListScreenState
   void _filterStudents() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _searchQuery = query;
-      _filteredStudents = _allStudents.where((s) {
-        return s.fullName.toLowerCase().contains(query);
+      _filteredEnrollments = _allEnrollments.where((enrollment) {
+        final fullName = enrollment.student.fullName.toLowerCase();
+        final enrollmentNumber =
+            (enrollment.student.enrollmentNumber ?? '').toLowerCase();
+        return fullName.contains(query) || enrollmentNumber.contains(query);
       }).toList();
     });
   }
@@ -395,7 +399,7 @@ class _StudentManagementListScreenState
                     child: CircularProgressIndicator(
                         color:
                             kPrimaryBlue)) // Bolinha de Loading enquanto a API responde
-                : _allStudents.isEmpty
+                : _allEnrollments.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -409,7 +413,7 @@ class _StudentManagementListScreenState
                           ],
                         ),
                       )
-                    : _filteredStudents.isEmpty
+                    : _filteredEnrollments.isEmpty
                         ? Center(
                             child: Text('Nenhum aluno encontrado na pesquisa.',
                                 style: GoogleFonts.inter(
@@ -418,12 +422,15 @@ class _StudentManagementListScreenState
                         : ListView.separated(
                             padding: EdgeInsets.symmetric(
                                 horizontal: 20.w, vertical: 10.h),
-                            itemCount: _filteredStudents.length,
+                            itemCount: _filteredEnrollments.length,
                             separatorBuilder: (_, __) => SizedBox(height: 12.h),
                             itemBuilder: (context, index) {
-                              final student = _filteredStudents[index];
+                              final enrollment = _filteredEnrollments[index];
                               return _StudentListItem(
-                                  student: student, isDark: isDark);
+                                enrollment: enrollment,
+                                classData: widget.classData,
+                                isDark: isDark,
+                              );
                             },
                           ),
           ),
@@ -434,24 +441,37 @@ class _StudentManagementListScreenState
 }
 
 class _StudentListItem extends StatelessWidget {
-  final Student student;
+  final Enrollment enrollment;
+  final ClassModel classData;
   final bool isDark;
 
-  const _StudentListItem({required this.student, required this.isDark});
+  const _StudentListItem({
+    required this.enrollment,
+    required this.classData,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final bool hasHealthAlert = student.healthInfo.hasAllergy ||
-        student.healthInfo.hasHealthProblem ||
-        student.healthInfo.hasDisability ||
-        student.healthInfo.takesMedication;
+    final student = enrollment.student;
+    final enrollmentNumber = (student.enrollmentNumber ?? '').trim().isEmpty
+        ? 'Sem matricula'
+        : student.enrollmentNumber!.trim();
+    final gender = student.gender.trim();
+    final hasGender = gender.isNotEmpty &&
+        gender.toLowerCase() != 'nao informado' &&
+        gender.toLowerCase() != 'não informado';
 
     return InkWell(
       onTap: () {
         Navigator.push(
           context,
           MaterialPageRoute(
-              builder: (_) => StudentProfileScreen(student: student)),
+            builder: (_) => TeacherStudentProfileScreen(
+              enrollment: enrollment,
+              classData: classData,
+            ),
+          ),
         );
       },
       borderRadius: BorderRadius.circular(16.r),
@@ -505,30 +525,38 @@ class _StudentListItem extends StatelessWidget {
                           size: 14.sp, color: _textSecondary(isDark)),
                       SizedBox(width: 4.w),
                       Text(
-                        student.enrollmentNumber ??
-                            student.id
-                                .substring(student.id.length - 6)
-                                .toUpperCase(),
+                        enrollmentNumber,
                         style: GoogleFonts.sourceCodePro(
                           fontSize: 12.sp,
                           color: _textSecondary(isDark),
                         ),
                       ),
+                      if (hasGender) ...[
+                        SizedBox(width: 8.w),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 8.w,
+                            vertical: 3.h,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _surfaceAlt(isDark),
+                            borderRadius: BorderRadius.circular(999.r),
+                          ),
+                          child: Text(
+                            gender,
+                            style: GoogleFonts.inter(
+                              fontSize: 10.sp,
+                              fontWeight: FontWeight.w700,
+                              color: _textSecondary(isDark),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],
               ),
             ),
-            if (hasHealthAlert)
-              Container(
-                margin: EdgeInsets.only(right: 12.w),
-                padding: EdgeInsets.all(8.w),
-                decoration: BoxDecoration(
-                    color: kErrorColor.withOpacity(0.1),
-                    shape: BoxShape.circle),
-                child: Icon(PhosphorIcons.heartbeat,
-                    color: kErrorColor, size: 18.sp),
-              ),
             Icon(PhosphorIcons.caret_right,
                 color: _textSecondary(isDark), size: 20.sp),
           ],
