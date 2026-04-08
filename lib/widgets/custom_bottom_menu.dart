@@ -25,8 +25,13 @@ class CustomSpeedDialMenu extends StatefulWidget {
   final VoidCallback? onStudentAction1; // Ex: Boletim
   final VoidCallback? onStudentAction2; // Ex: Comunicados/Mural
 
+  // Ações do Responsável
+  final VoidCallback? onGuardianRefresh;
+  final VoidCallback? onGuardianAccount;
+
   final bool isProfessor;
   final bool isStudent;
+  final bool isGuardian;
 
   const CustomSpeedDialMenu({
     super.key,
@@ -39,8 +44,11 @@ class CustomSpeedDialMenu extends StatefulWidget {
     this.onNavigateToReportCards,
     this.onStudentAction1,
     this.onStudentAction2,
+    this.onGuardianRefresh,
+    this.onGuardianAccount,
     this.isProfessor = false,
     this.isStudent = false,
+    this.isGuardian = false,
   });
 
   @override
@@ -92,6 +100,31 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
   }
 
   List<_RadialMenuAction> _buildActions() {
+    if (widget.isGuardian) {
+      return [
+        _RadialMenuAction(
+          angle: 135,
+          distance: 140.h,
+          icon: PhosphorIcons.arrow_clockwise_fill,
+          label: 'Atualizar\ndados',
+          color: const Color(0xFF00A859),
+          iconColor: Colors.white,
+          onTap: widget.onGuardianRefresh ?? () {},
+          isBig: true,
+        ),
+        _RadialMenuAction(
+          angle: 45,
+          distance: 140.h,
+          icon: PhosphorIcons.user_circle_fill,
+          label: 'Minha\nconta',
+          color: Colors.white,
+          iconColor: Colors.blueAccent,
+          onTap: widget.onGuardianAccount ?? () {},
+          isBig: true,
+        ),
+      ];
+    }
+
     if (widget.isStudent) {
       return [
         _RadialMenuAction(
@@ -283,33 +316,43 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                   ),
                   _buildTabItem(
                     1,
-                    widget.isStudent
+                    widget.isGuardian
                         ? PhosphorIcons.book_open_fill
-                        : (widget.isProfessor
-                            ? PhosphorIcons.student_fill
-                            : PhosphorIcons.users_three_fill),
-                    widget.isStudent
-                        ? 'Provas'
-                        : (widget.isProfessor ? 'Alunos' : 'Participantes'),
+                        : widget.isStudent
+                            ? PhosphorIcons.book_open_fill
+                            : (widget.isProfessor
+                                ? PhosphorIcons.student_fill
+                                : PhosphorIcons.users_three_fill),
+                    widget.isGuardian
+                        ? 'Acompanhar'
+                        : widget.isStudent
+                            ? 'Provas'
+                            : (widget.isProfessor ? 'Alunos' : 'Participantes'),
                     isDark,
                   ),
                   SizedBox(width: 60.w),
                   _buildTabItem(
                     2,
-                    widget.isStudent
-                        ? PhosphorIcons.receipt_fill
-                        : (widget.isProfessor
-                            ? PhosphorIcons.chalkboard_teacher_fill
-                            : PhosphorIcons.money_fill),
-                    widget.isStudent
-                        ? 'Mensalidades'
-                        : (widget.isProfessor ? 'Turmas' : 'Financeiro'),
+                    widget.isGuardian
+                        ? PhosphorIcons.money_fill
+                        : widget.isStudent
+                            ? PhosphorIcons.receipt_fill
+                            : (widget.isProfessor
+                                ? PhosphorIcons.chalkboard_teacher_fill
+                                : PhosphorIcons.money_fill),
+                    widget.isGuardian
+                        ? 'Financeiro'
+                        : widget.isStudent
+                            ? 'Mensalidades'
+                            : (widget.isProfessor ? 'Turmas' : 'Financeiro'),
                     isDark,
                   ),
                   _buildTabItem(
                     3,
-                    PhosphorIcons.gear_fill,
-                    'Mais',
+                    widget.isGuardian
+                        ? PhosphorIcons.user_circle_fill
+                        : PhosphorIcons.gear_fill,
+                    widget.isGuardian ? 'Conta' : 'Mais',
                     isDark,
                   ),
                 ],

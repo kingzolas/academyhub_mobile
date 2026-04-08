@@ -1,11 +1,11 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 class SchoolModel {
   String id;
   String name;
   String legalName;
+  String? publicIdentifier;
   String? cnpj;
   String? stateRegistration;
   String? municipalRegistration;
@@ -27,6 +27,7 @@ class SchoolModel {
     required this.id,
     required this.name,
     required this.legalName,
+    this.publicIdentifier,
     this.cnpj,
     this.stateRegistration,
     this.municipalRegistration,
@@ -69,6 +70,7 @@ class SchoolModel {
       id: json['_id'] ?? '',
       name: json['name'] ?? '',
       legalName: json['legalName'] ?? '',
+      publicIdentifier: json['publicIdentifier'],
       cnpj: json['cnpj'],
       stateRegistration: json['stateRegistration'],
       municipalRegistration: json['municipalRegistration'],

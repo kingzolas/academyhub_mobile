@@ -13,6 +13,9 @@ class InvoiceProvider extends ChangeNotifier {
   List<Invoice> _studentInvoices = [];
   List<Invoice> get studentInvoices => _studentInvoices;
 
+  List<Invoice> _guardianInvoices = [];
+  List<Invoice> get guardianInvoices => _guardianInvoices;
+
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
@@ -70,6 +73,21 @@ class InvoiceProvider extends ChangeNotifier {
     _setLoading(false);
   }
 
+  Future<void> fetchGuardianInvoices({
+    required String token,
+  }) async {
+    _setLoading(true);
+    setError(null);
+    try {
+      _guardianInvoices = await _invoiceService.getGuardianInvoices(
+        token: token,
+      );
+    } catch (e) {
+      setError(e.toString().replaceAll('Exception: ', ''));
+    }
+    _setLoading(false);
+  }
+
   Future<void> fetchAllInvoices({
     required String token,
     String? status,
@@ -104,7 +122,7 @@ class InvoiceProvider extends ChangeNotifier {
     } catch (e) {
       setError(e.toString());
       _setLoading(false);
-      throw e;
+      rethrow;
     }
   }
 
@@ -241,6 +259,32 @@ class InvoiceProvider extends ChangeNotifier {
       final errorMsg = e.toString().replaceAll('Exception: ', '');
       // ignore: avoid_print
       print('❌ Erro ao processar impressão: $errorMsg');
+      setError(errorMsg);
+    } finally {
+      _setLoading(false);
+    }
+  }
+
+  Future<void> generateGuardianBatchPdf({
+    required List<String> invoiceIds,
+    required String token,
+  }) async {
+    _setLoading(true);
+    setError(null);
+
+    try {
+      final Uint8List pdfBytes = await _invoiceService.downloadGuardianBatchPdf(
+        invoiceIds: invoiceIds,
+        token: token,
+      );
+
+      await Printing.layoutPdf(
+        onLayout: (format) async => pdfBytes,
+        name:
+            'Boleto_Responsavel_${DateTime.now().day}_${DateTime.now().month}.pdf',
+      );
+    } catch (e) {
+      final errorMsg = e.toString().replaceAll('Exception: ', '');
       setError(errorMsg);
     } finally {
       _setLoading(false);

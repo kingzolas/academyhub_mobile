@@ -1,15 +1,16 @@
 import 'dart:convert';
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/screens/loginPage.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
 
 import 'package:academyhub_mobile/model/user_model.dart';
+import 'package:academyhub_mobile/model/guardian_auth_model.dart';
 import '../services/auth_service.dart';
 import '../services/auth_student_service.dart';
+import '../services/guardian_auth_service.dart';
 import 'school_provider.dart';
 
 // Imports dos Providers que precisam ser limpos no logout
@@ -26,21 +27,58 @@ import '../services/navigation_service.dart';
 // import '../screens/auth/login_screen.dart'; // Ajuste este caminho para a sua tela de Login real
 
 class AuthProvider with ChangeNotifier {
+  static const String _authTokenKey = 'authToken';
+  static const String _userDataKey = 'userData';
+  static const String _guardianSessionDataKey = 'guardianSessionData';
+  static const String _sessionPrincipalKey = 'session_principal';
+  static const String _studentTokenKey = 'student_token';
+  static const String _studentDataKey = 'student_data';
+  static const String _userRoleKey = 'user_role';
+
   final AuthService _authService = AuthService();
   final AuthStudentService _authStudentService = AuthStudentService();
+  final GuardianAuthService _guardianAuthService = GuardianAuthService();
 
   User? _user;
   String? _token;
+  GuardianSession? _guardianSession;
+  String? _sessionPrincipal;
 
   User? get user => _user;
   String? get token => _token;
+  GuardianSession? get guardianSession => _guardianSession;
   bool get isAuthenticated => _token != null;
+  bool get isGuardian =>
+      _sessionPrincipal == 'guardian' && _guardianSession != null;
 
   bool get isProfessor => _user?.roles.contains('Professor') ?? false;
 
   bool get isStudent =>
       (_user?.roles.contains('Aluno') ?? false) ||
       (_user?.roles.contains('Student') ?? false);
+
+  Future<void> _persistStandardSession(Map<String, dynamic> rawUser) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_authTokenKey, _token!);
+    await prefs.setString(_userDataKey, json.encode(rawUser));
+    await prefs.remove(_guardianSessionDataKey);
+    await prefs.setString(
+        _sessionPrincipalKey, isStudent ? 'student' : 'staff');
+  }
+
+  Future<void> _persistGuardianSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_authTokenKey, _token!);
+    await prefs.setString(
+      _guardianSessionDataKey,
+      json.encode(_guardianSession!.toJson()),
+    );
+    await prefs.remove(_userDataKey);
+    await prefs.remove(_studentTokenKey);
+    await prefs.remove(_studentDataKey);
+    await prefs.remove(_userRoleKey);
+    await prefs.setString(_sessionPrincipalKey, 'guardian');
+  }
 
   // =================================================================
   // FUNÇÃO GLOBAL PARA LIMPEZA DE CACHE DOS PROVIDERS
@@ -132,13 +170,13 @@ class AuthProvider with ChangeNotifier {
 
       _user = User.fromJson(rawUser);
       _token = response['token'];
+      _guardianSession = null;
+      _sessionPrincipal = isStudent ? 'student' : 'staff';
 
       debugPrint('✅ [AuthProvider] Login bem-sucedido! Objeto User criado.');
       debugPrint('   - Token recebido: ${_token?.substring(0, 15)}...');
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('authToken', _token!);
-      await prefs.setString('userData', json.encode(rawUser));
+      await _persistStandardSession(rawUser);
       debugPrint(
           '💾 [AuthProvider] Token e usuário salvos no SharedPreferences.');
 
@@ -196,12 +234,12 @@ class AuthProvider with ChangeNotifier {
 
         _user = User.fromJson(rawUser);
         _token = responseData['token'];
+        _guardianSession = null;
+        _sessionPrincipal = 'student';
 
         debugPrint('✅ [AuthProvider] Magic Link aceito! Objeto User criado.');
 
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('authToken', _token!);
-        await prefs.setString('userData', json.encode(rawUser));
+        await _persistStandardSession(rawUser);
 
         if (_user != null && _token != null) {
           final schoolId = _user!.schoolId;
@@ -242,14 +280,18 @@ class AuthProvider with ChangeNotifier {
     // 2. Apaga as variáveis locais da sessão
     _user = null;
     _token = null;
+    _guardianSession = null;
+    _sessionPrincipal = null;
 
     // 3. Remove do armazenamento permanente
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('authToken');
-    await prefs.remove('userData');
-    await prefs.remove('student_token');
-    await prefs.remove('student_data');
-    await prefs.remove('user_role');
+    await prefs.remove(_authTokenKey);
+    await prefs.remove(_userDataKey);
+    await prefs.remove(_guardianSessionDataKey);
+    await prefs.remove(_studentTokenKey);
+    await prefs.remove(_studentDataKey);
+    await prefs.remove(_userRoleKey);
+    await prefs.remove(_sessionPrincipalKey);
 
     debugPrint(
         '🗑️ [AuthProvider] Sessão encerrada e dados removidos do SharedPreferences.');
@@ -275,14 +317,49 @@ class AuthProvider with ChangeNotifier {
     debugPrint('--- [AuthProvider] Tentando auto-login... ---');
     final prefs = await SharedPreferences.getInstance();
 
-    if (!prefs.containsKey('authToken')) {
+    if (!prefs.containsKey(_authTokenKey)) {
       debugPrint(
           '🟡 [AuthProvider] Nenhum token encontrado. Auto-login falhou.');
       return false;
     }
 
-    _token = prefs.getString('authToken');
-    final userDataString = prefs.getString('userData');
+    _token = prefs.getString(_authTokenKey);
+    final sessionPrincipal = prefs.getString(_sessionPrincipalKey);
+
+    if (sessionPrincipal == 'guardian') {
+      final guardianSessionString = prefs.getString(_guardianSessionDataKey);
+
+      if (guardianSessionString == null) {
+        if (context.mounted) {
+          await logout(context);
+        } else {
+          await logout();
+        }
+        return false;
+      }
+
+      try {
+        _user = null;
+        _guardianSession =
+            GuardianSession.fromJson(json.decode(guardianSessionString));
+        _sessionPrincipal = 'guardian';
+        notifyListeners();
+        debugPrint(
+            '✅ [AuthProvider] Auto-login de responsavel restaurado com sucesso.');
+        return true;
+      } catch (e) {
+        debugPrint(
+            '❌ [AuthProvider] Erro ao restaurar sessao de responsavel: $e');
+        if (context.mounted) {
+          await logout(context);
+        } else {
+          await logout();
+        }
+        return false;
+      }
+    }
+
+    final userDataString = prefs.getString(_userDataKey);
 
     debugPrint('✅ [AuthProvider] Dados encontrados no SharedPreferences!');
 
@@ -290,6 +367,9 @@ class AuthProvider with ChangeNotifier {
       try {
         final userDataMap = json.decode(userDataString);
         _user = User.fromJson(userDataMap);
+        _guardianSession = null;
+        _sessionPrincipal =
+            sessionPrincipal ?? (isStudent ? 'student' : 'staff');
 
         notifyListeners();
         debugPrint(
@@ -312,11 +392,82 @@ class AuthProvider with ChangeNotifier {
         debugPrint(
             '❌ [AuthProvider] Erro ao processar dados salvos no auto-login: $e');
         // Usando o context se houver erro e precisar forçar o logout
-        await logout(context);
+        if (context.mounted) {
+          await logout(context);
+        } else {
+          await logout();
+        }
         return false;
       }
     }
 
     return false;
+  }
+
+  Future<GuardianFirstAccessStartResult> startGuardianFirstAccess({
+    String? schoolPublicId,
+    required String studentFullName,
+    required String birthDate,
+  }) {
+    return _guardianAuthService.startGuardianFirstAccess(
+      schoolPublicId: schoolPublicId,
+      studentFullName: studentFullName,
+      birthDate: birthDate,
+    );
+  }
+
+  Future<GuardianVerificationResult> verifyGuardianResponsible({
+    required String challengeId,
+    required String optionId,
+    required String cpf,
+  }) {
+    return _guardianAuthService.verifyGuardianResponsible(
+      challengeId: challengeId,
+      optionId: optionId,
+      cpf: cpf,
+    );
+  }
+
+  Future<GuardianPinSetupResult> setGuardianPin({
+    required String challengeId,
+    required String verificationToken,
+    required String pin,
+  }) {
+    return _guardianAuthService.setGuardianPin(
+      challengeId: challengeId,
+      verificationToken: verificationToken,
+      pin: pin,
+    );
+  }
+
+  Future<GuardianLoginResult> loginGuardian({
+    String? schoolPublicId,
+    required String cpf,
+    required String pin,
+  }) async {
+    try {
+      final result = await _guardianAuthService.loginGuardian(
+        schoolPublicId: schoolPublicId,
+        cpf: cpf,
+        pin: pin,
+      );
+
+      if (!result.isAuthenticated || result.session == null) {
+        return result;
+      }
+
+      _user = null;
+      _guardianSession = result.session;
+      _token = result.session!.token;
+      _sessionPrincipal = 'guardian';
+
+      await _persistGuardianSession();
+
+      notifyListeners();
+      return result;
+    } catch (e) {
+      debugPrint('❌ [AuthProvider] Erro no login do responsavel: $e');
+      rethrow;
+    }
   }
 }

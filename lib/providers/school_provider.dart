@@ -15,6 +15,7 @@ class SchoolProvider extends ChangeNotifier {
   // Getters
   SchoolModel? get currentSchool => _school;
   SchoolModel? get school => _school;
+  String? get currentPublicIdentifier => _school?.publicIdentifier;
 
   bool get isLoading => _isLoading;
   bool get isSaving => _isSaving;

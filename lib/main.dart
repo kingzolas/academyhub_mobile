@@ -44,6 +44,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import 'package:academyhub_mobile/dashboard.dart';
 import 'package:academyhub_mobile/screens/loginPage.dart';
+import 'package:academyhub_mobile/screens/guardian_home_placeholder_screen.dart';
 import 'package:academyhub_mobile/screens/splash_screen.dart';
 import 'package:academyhub_mobile/services/notification.service.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -351,6 +352,9 @@ class AuthWrapper extends StatelessWidget {
     return Consumer<AuthProvider>(
       builder: (ctx, auth, _) {
         if (auth.isAuthenticated) {
+          if (auth.isGuardian) {
+            return const GuardianHomePlaceholderScreen();
+          }
           return const Dashboard();
         }
         return FutureBuilder(

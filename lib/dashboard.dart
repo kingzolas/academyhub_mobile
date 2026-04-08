@@ -5,10 +5,9 @@ import 'package:provider/provider.dart';
 
 // Providers e Services
 import 'package:academyhub_mobile/providers/auth_provider.dart';
+import 'package:academyhub_mobile/screens/guardian_home_placeholder_screen.dart';
 import 'package:academyhub_mobile/providers/invoice_provider.dart';
-import 'package:academyhub_mobile/services/update_service.dart';
 import 'package:academyhub_mobile/services/websocket.dart';
-import 'package:academyhub_mobile/popup/update_popup.dart';
 
 // Views
 import 'package:academyhub_mobile/screens/dashboard/staff_dashboard_view.dart';
@@ -23,7 +22,6 @@ class Dashboard extends StatefulWidget {
 }
 
 class _DashboardState extends State<Dashboard> {
-  OverlayEntry? _updateOverlayEntry;
   final WebSocketService _webSocketService = WebSocketService();
   StreamSubscription? _socketSubscription;
 
@@ -87,27 +85,8 @@ class _DashboardState extends State<Dashboard> {
   //   }
   // }
 
-  void _showUpdatePopup(String downloadUrl, String version) {
-    if (_updateOverlayEntry != null) return;
-    _updateOverlayEntry = OverlayEntry(
-      builder: (context) => UpdateAvailablePopup(
-        newVersion: version,
-        onDismiss: () {
-          _updateOverlayEntry?.remove();
-          _updateOverlayEntry = null;
-        },
-        onUpdate: () {
-          _updateOverlayEntry?.remove();
-          _updateOverlayEntry = null;
-        },
-      ),
-    );
-    Overlay.of(context).insert(_updateOverlayEntry!);
-  }
-
   @override
   void dispose() {
-    _updateOverlayEntry?.remove();
     _socketSubscription?.cancel();
     super.dispose();
   }
@@ -115,6 +94,10 @@ class _DashboardState extends State<Dashboard> {
   @override
   Widget build(BuildContext context) {
     final authProvider = Provider.of<AuthProvider>(context);
+
+    if (authProvider.isGuardian) {
+      return const GuardianHomePlaceholderScreen();
+    }
 
     // 1. É ALUNO?
     if (authProvider.isStudent) {

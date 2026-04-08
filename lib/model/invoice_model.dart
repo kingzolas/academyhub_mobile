@@ -19,7 +19,6 @@ String _collectionStatusToJson(CollectionStatus v) {
     case CollectionStatus.compensationHold:
       return 'compensation_hold';
     case CollectionStatus.collectable:
-    default:
       return 'collectable';
   }
 }
@@ -145,6 +144,7 @@ class Invoice {
   // Dados para Boleto (Cora ou MP Boleto)
   final String? boletoUrl; // URL do PDF
   final String? boletoBarcode; // Linha digitável
+  final String? boletoDigitableLine; // Linha digitável oficial (47 dígitos)
 
   // Dados para Pix (Cora ou MP Pix)
   final String? pixCode; // Copia e Cola
@@ -175,6 +175,7 @@ class Invoice {
     this.externalId,
     this.boletoUrl,
     this.boletoBarcode,
+    this.boletoDigitableLine,
     this.pixCode,
     this.pixQrBase64,
     this.createdAt,
@@ -212,6 +213,7 @@ class Invoice {
     String? externalId,
     String? boletoUrl,
     String? boletoBarcode,
+    String? boletoDigitableLine,
     String? pixCode,
     String? pixQrBase64,
     DateTime? createdAt,
@@ -235,6 +237,7 @@ class Invoice {
       externalId: externalId ?? this.externalId,
       boletoUrl: boletoUrl ?? this.boletoUrl,
       boletoBarcode: boletoBarcode ?? this.boletoBarcode,
+      boletoDigitableLine: boletoDigitableLine ?? this.boletoDigitableLine,
       pixCode: pixCode ?? this.pixCode,
       pixQrBase64: pixQrBase64 ?? this.pixQrBase64,
       createdAt: createdAt ?? this.createdAt,
@@ -322,6 +325,7 @@ class Invoice {
 
       boletoUrl: (json['boleto_url'] ?? json['mp_ticket_url'])?.toString(),
       boletoBarcode: json['boleto_barcode']?.toString(),
+      boletoDigitableLine: json['boleto_digitable_line']?.toString(),
       pixCode: (json['pix_code'] ?? json['mp_pix_copia_e_cola'])?.toString(),
       pixQrBase64:
           (json['pix_qr_base64'] ?? json['mp_pix_qr_base64'])?.toString(),
@@ -351,6 +355,7 @@ class Invoice {
       'external_id': externalId,
       'boleto_url': boletoUrl,
       'boleto_barcode': boletoBarcode,
+      'boleto_digitable_line': boletoDigitableLine,
       'pix_code': pixCode,
       'pix_qr_base64': pixQrBase64,
       'createdAt': createdAt?.toIso8601String(),

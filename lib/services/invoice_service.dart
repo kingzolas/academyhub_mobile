@@ -68,6 +68,31 @@ class InvoiceService {
     }
   }
 
+  Future<List<Invoice>> getGuardianInvoices({
+    required String token,
+  }) async {
+    final url = Uri.parse('$_baseUrl/guardian-auth/invoices');
+    final headers = _getHeaders(token);
+
+    final response = await http.get(url, headers: headers);
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> data = jsonDecode(response.body);
+      final rawInvoices = data['invoices'] as List<dynamic>? ?? const [];
+      return rawInvoices
+          .whereType<Map<String, dynamic>>()
+          .map(Invoice.fromJson)
+          .toList();
+    } else {
+      String message = 'Falha ao buscar os boletos do responsável.';
+      try {
+        final errorBody = jsonDecode(response.body);
+        message = (errorBody['message'] ?? message).toString();
+      } catch (_) {}
+      throw Exception(message);
+    }
+  }
+
   /// Rota: GET /api/invoices/:id
   Future<Invoice> getInvoiceById({
     required String invoiceId,
@@ -183,6 +208,28 @@ class InvoiceService {
       try {
         final err = jsonDecode(response.body);
         msg = err['message'] ?? msg;
+      } catch (_) {}
+      throw Exception(msg);
+    }
+  }
+
+  Future<Uint8List> downloadGuardianBatchPdf({
+    required List<String> invoiceIds,
+    required String token,
+  }) async {
+    final url = Uri.parse('$_baseUrl/guardian-auth/invoices/batch-print');
+    final headers = _getHeaders(token);
+    final body = jsonEncode({'invoiceIds': invoiceIds});
+
+    final response = await http.post(url, headers: headers, body: body);
+
+    if (response.statusCode == 200) {
+      return response.bodyBytes;
+    } else {
+      String msg = 'Erro ao gerar o PDF do boleto.';
+      try {
+        final err = jsonDecode(response.body);
+        msg = (err['message'] ?? msg).toString();
       } catch (_) {}
       throw Exception(msg);
     }
