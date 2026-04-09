@@ -90,17 +90,35 @@ class GuardianFirstAccessStartResult {
 }
 
 class GuardianVerificationResult {
-  final String verificationToken;
+  final String status;
+  final String? verificationToken;
+  final String? identifierType;
+  final String? identifierMasked;
   final String message;
 
   const GuardianVerificationResult({
+    required this.status,
     required this.verificationToken,
+    required this.identifierType,
+    required this.identifierMasked,
     required this.message,
   });
 
+  bool get requiresPinCreation => status == 'new_account_requires_pin';
+  bool get requiresExistingPin => status == 'existing_account_requires_pin';
+  bool get isAlreadyLinked => status == 'student_already_linked';
+  bool get requiresPinStep => requiresPinCreation || requiresExistingPin;
+
   factory GuardianVerificationResult.fromJson(Map<String, dynamic> json) {
     return GuardianVerificationResult(
-      verificationToken: (json['verificationToken'] ?? '').toString(),
+      status: (json['status'] ??
+              ((json['verificationToken'] != null)
+                  ? 'new_account_requires_pin'
+                  : ''))
+          .toString(),
+      verificationToken: json['verificationToken']?.toString(),
+      identifierType: json['identifierType']?.toString(),
+      identifierMasked: json['identifierMasked']?.toString(),
       message: (json['message'] ?? '').toString(),
     );
   }
@@ -137,6 +155,9 @@ class GuardianSession {
   final int linkedStudentsCount;
   final String schoolPublicId;
   final String schoolName;
+  final List<GuardianLinkedStudent> linkedStudents;
+  final GuardianLinkedStudent? defaultStudent;
+  final String? selectedStudentId;
 
   const GuardianSession({
     required this.token,
@@ -146,7 +167,46 @@ class GuardianSession {
     required this.linkedStudentsCount,
     required this.schoolPublicId,
     required this.schoolName,
+    this.linkedStudents = const [],
+    this.defaultStudent,
+    this.selectedStudentId,
   });
+
+  bool hasLinkedStudent(String? studentId) {
+    final normalizedStudentId = (studentId ?? '').trim();
+    if (normalizedStudentId.isEmpty) return false;
+
+    return linkedStudents.any((student) => student.id == normalizedStudentId);
+  }
+
+  GuardianSession copyWith({
+    String? token,
+    String? identifierType,
+    String? identifierMasked,
+    String? status,
+    int? linkedStudentsCount,
+    String? schoolPublicId,
+    String? schoolName,
+    List<GuardianLinkedStudent>? linkedStudents,
+    GuardianLinkedStudent? defaultStudent,
+    String? selectedStudentId,
+    bool clearSelectedStudentId = false,
+  }) {
+    return GuardianSession(
+      token: token ?? this.token,
+      identifierType: identifierType ?? this.identifierType,
+      identifierMasked: identifierMasked ?? this.identifierMasked,
+      status: status ?? this.status,
+      linkedStudentsCount: linkedStudentsCount ?? this.linkedStudentsCount,
+      schoolPublicId: schoolPublicId ?? this.schoolPublicId,
+      schoolName: schoolName ?? this.schoolName,
+      linkedStudents: linkedStudents ?? this.linkedStudents,
+      defaultStudent: defaultStudent ?? this.defaultStudent,
+      selectedStudentId: clearSelectedStudentId
+          ? null
+          : (selectedStudentId ?? this.selectedStudentId),
+    );
+  }
 
   factory GuardianSession.fromLoginJson(
     Map<String, dynamic> json, {
@@ -154,6 +214,13 @@ class GuardianSession {
   }) {
     final guardianJson = json['guardian'] as Map<String, dynamic>? ?? const {};
     final schoolJson = json['school'] as Map<String, dynamic>? ?? const {};
+    final rawLinkedStudents =
+        json['linkedStudents'] as List<dynamic>? ?? const [];
+    final linkedStudents = rawLinkedStudents
+        .whereType<Map<String, dynamic>>()
+        .map(GuardianLinkedStudent.fromJson)
+        .toList();
+    final defaultStudentJson = json['defaultStudent'] as Map<String, dynamic>?;
 
     return GuardianSession(
       token: (json['token'] ?? '').toString(),
@@ -165,10 +232,23 @@ class GuardianSession {
       schoolPublicId:
           (schoolJson['publicIdentifier'] ?? schoolPublicId ?? '').toString(),
       schoolName: (schoolJson['name'] ?? '').toString(),
+      linkedStudents: linkedStudents,
+      defaultStudent: defaultStudentJson == null
+          ? null
+          : GuardianLinkedStudent.fromJson(defaultStudentJson),
+      selectedStudentId: json['selectedStudentId']?.toString(),
     );
   }
 
   factory GuardianSession.fromJson(Map<String, dynamic> json) {
+    final rawLinkedStudents =
+        json['linkedStudents'] as List<dynamic>? ?? const [];
+    final linkedStudents = rawLinkedStudents
+        .whereType<Map<String, dynamic>>()
+        .map(GuardianLinkedStudent.fromJson)
+        .toList();
+    final defaultStudentJson = json['defaultStudent'] as Map<String, dynamic>?;
+
     return GuardianSession(
       token: (json['token'] ?? '').toString(),
       identifierType: (json['identifierType'] ?? 'cpf').toString(),
@@ -178,6 +258,11 @@ class GuardianSession {
           int.tryParse('${json['linkedStudentsCount'] ?? 0}') ?? 0,
       schoolPublicId: (json['schoolPublicId'] ?? '').toString(),
       schoolName: (json['schoolName'] ?? '').toString(),
+      linkedStudents: linkedStudents,
+      defaultStudent: defaultStudentJson == null
+          ? null
+          : GuardianLinkedStudent.fromJson(defaultStudentJson),
+      selectedStudentId: json['selectedStudentId']?.toString(),
     );
   }
 
@@ -190,6 +275,64 @@ class GuardianSession {
       'linkedStudentsCount': linkedStudentsCount,
       'schoolPublicId': schoolPublicId,
       'schoolName': schoolName,
+      'linkedStudents': linkedStudents
+          .map(
+            (student) => {
+              'id': student.id,
+              'fullName': student.fullName,
+              'relationship': student.relationship,
+              'birthDate': student.birthDate?.toIso8601String(),
+              'class': student.classInfo == null
+                  ? null
+                  : {
+                      'id': student.classInfo!.id,
+                      'name': student.classInfo!.name,
+                      'grade': student.classInfo!.grade,
+                      'shift': student.classInfo!.shift,
+                      'schoolYear': student.classInfo!.schoolYear,
+                      'room': student.classInfo!.room,
+                    },
+              'enrollment': student.enrollment == null
+                  ? null
+                  : {
+                      'id': student.enrollment!.id,
+                      'academicYear': student.enrollment!.academicYear,
+                      'enrollmentDate':
+                          student.enrollment!.enrollmentDate?.toIso8601String(),
+                      'status': student.enrollment!.status,
+                    },
+            },
+          )
+          .toList(),
+      'defaultStudent': defaultStudent == null
+          ? null
+          : {
+              'id': defaultStudent!.id,
+              'fullName': defaultStudent!.fullName,
+              'relationship': defaultStudent!.relationship,
+              'birthDate': defaultStudent!.birthDate?.toIso8601String(),
+              'class': defaultStudent!.classInfo == null
+                  ? null
+                  : {
+                      'id': defaultStudent!.classInfo!.id,
+                      'name': defaultStudent!.classInfo!.name,
+                      'grade': defaultStudent!.classInfo!.grade,
+                      'shift': defaultStudent!.classInfo!.shift,
+                      'schoolYear': defaultStudent!.classInfo!.schoolYear,
+                      'room': defaultStudent!.classInfo!.room,
+                    },
+              'enrollment': defaultStudent!.enrollment == null
+                  ? null
+                  : {
+                      'id': defaultStudent!.enrollment!.id,
+                      'academicYear': defaultStudent!.enrollment!.academicYear,
+                      'enrollmentDate': defaultStudent!
+                          .enrollment!.enrollmentDate
+                          ?.toIso8601String(),
+                      'status': defaultStudent!.enrollment!.status,
+                    },
+            },
+      'selectedStudentId': selectedStudentId,
     };
   }
 }
@@ -541,8 +684,7 @@ class GuardianAttendanceSummary {
       totalRecords: int.tryParse('${json['totalRecords'] ?? 0}') ?? 0,
       presentCount: int.tryParse('${json['presentCount'] ?? 0}') ?? 0,
       absentCount: int.tryParse('${json['absentCount'] ?? 0}') ?? 0,
-      justifiedAbsences:
-          int.tryParse('${json['justifiedAbsences'] ?? 0}') ?? 0,
+      justifiedAbsences: int.tryParse('${json['justifiedAbsences'] ?? 0}') ?? 0,
       pendingJustifications:
           int.tryParse('${json['pendingJustifications'] ?? 0}') ?? 0,
       rejectedJustifications:

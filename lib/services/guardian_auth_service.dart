@@ -132,6 +132,23 @@ class GuardianAuthService {
     return GuardianPinSetupResult.fromJson(response);
   }
 
+  Future<GuardianPinSetupResult> linkGuardianStudentWithExistingPin({
+    required String challengeId,
+    required String verificationToken,
+    required String pin,
+  }) async {
+    final response = await _post(
+      '/guardian-auth/first-access/link-existing-account',
+      payload: {
+        'challengeId': challengeId,
+        'verificationToken': verificationToken,
+        'pin': pin,
+      },
+    );
+
+    return GuardianPinSetupResult.fromJson(response);
+  }
+
   Future<GuardianLoginResult> loginGuardian({
     String? schoolPublicId,
     required String cpf,
@@ -208,5 +225,51 @@ class GuardianAuthService {
     );
 
     return GuardianActivitiesScreenData.fromJson(response);
+  }
+
+  Future<Map<String, dynamic>> getGuardianInvoices({
+    required String token,
+    String? studentId,
+  }) {
+    final normalizedStudentId = (studentId ?? '').trim();
+    return _getAuthorized(
+      '/guardian-auth/invoices',
+      token: token,
+      queryParameters: normalizedStudentId.isEmpty
+          ? null
+          : {'studentId': normalizedStudentId},
+    );
+  }
+
+  Future<List<int>> downloadGuardianBatchPdf({
+    required String token,
+    required List<String> invoiceIds,
+    String? studentId,
+  }) async {
+    final response = await http.post(
+      _buildUri('/guardian-auth/invoices/batch-print'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $token',
+      },
+      body: jsonEncode({
+        'invoiceIds': invoiceIds,
+        if ((studentId ?? '').trim().isNotEmpty) 'studentId': studentId!.trim(),
+      }),
+    );
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return response.bodyBytes;
+    }
+
+    String message = 'Não foi possível gerar o PDF do boleto.';
+    try {
+      final responseData =
+          jsonDecode(response.body.isEmpty ? '{}' : response.body)
+              as Map<String, dynamic>;
+      message = (responseData['message'] ?? message).toString();
+    } catch (_) {}
+
+    throw Exception(message);
   }
 }

@@ -28,6 +28,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
   // Ações do Responsável
   final VoidCallback? onGuardianRefresh;
   final VoidCallback? onGuardianAccount;
+  final VoidCallback? onGuardianStudentSwitcher;
 
   final bool isProfessor;
   final bool isStudent;
@@ -46,6 +47,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
     this.onStudentAction2,
     this.onGuardianRefresh,
     this.onGuardianAccount,
+    this.onGuardianStudentSwitcher,
     this.isProfessor = false,
     this.isStudent = false,
     this.isGuardian = false,
@@ -399,11 +401,15 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
 
   Widget _buildTabItem(int index, IconData icon, String label, bool isDark) {
     final isSelected = widget.currentIndex == index;
+    final guardianLongPress = widget.isGuardian && index == 3
+        ? widget.onGuardianStudentSwitcher
+        : null;
 
     return IgnorePointer(
       ignoring: _isOpen,
       child: GestureDetector(
         onTap: () => widget.onTabSelected(index),
+        onLongPress: guardianLongPress,
         behavior: HitTestBehavior.opaque,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

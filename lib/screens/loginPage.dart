@@ -742,6 +742,7 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
   String? _verificationToken;
   GuardianFirstAccessStartResult? _startResult;
   GuardianCandidate? _selectedGuardian;
+  GuardianVerificationResult? _verificationResult;
   GuardianPinSetupResult? _pinResult;
   GuardianSchoolOption? _selectedSchoolOption;
   String _lastLookupFingerprint = '';
@@ -836,6 +837,11 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
         _challengeId = result.challengeId;
         _startResult = result;
         _selectedGuardian = null;
+        _verificationResult = null;
+        _verificationToken = null;
+        _pinResult = null;
+        _pinController.clear();
+        _confirmPinController.clear();
         _selectedSchoolOption = null;
         _lastLookupFingerprint = lookupFingerprint;
         _stepIndex = 1;
@@ -871,8 +877,25 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
               );
 
       setState(() {
+        _verificationResult = result;
         _verificationToken = result.verificationToken;
-        _stepIndex = 3;
+        _pinController.clear();
+        _confirmPinController.clear();
+
+        if (result.isAlreadyLinked) {
+          _pinResult = GuardianPinSetupResult(
+            status: result.status,
+            identifierType: result.identifierType ?? 'cpf',
+            identifierMasked:
+                result.identifierMasked ?? _cpfFormatter.getMaskedText(),
+            message: result.message,
+          );
+          _stepIndex = 4;
+        } else if (result.requiresPinStep) {
+          _stepIndex = 3;
+        } else {
+          _errorMessage = result.message;
+        }
       });
     } catch (error) {
       _setError(error.toString().replaceAll('Exception: ', ''));
@@ -883,13 +906,15 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
     }
   }
 
-  Future<void> _setGuardianPin() async {
+  Future<void> _submitGuardianPinStep() async {
     if (!(_pinFormKey.currentState?.validate() ?? false)) return;
 
     final pin = _pinController.text.trim();
+    final requiresExistingPin =
+        _verificationResult?.requiresExistingPin ?? false;
     final confirmPin = _confirmPinController.text.trim();
 
-    if (pin != confirmPin) {
+    if (!requiresExistingPin && pin != confirmPin) {
       _setError('Os PINs informados precisam ser iguais.');
       return;
     }
@@ -900,11 +925,18 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
     });
 
     try {
-      final result = await context.read<AuthProvider>().setGuardianPin(
-            challengeId: _challengeId!,
-            verificationToken: _verificationToken!,
-            pin: pin,
-          );
+      final auth = context.read<AuthProvider>();
+      final result = requiresExistingPin
+          ? await auth.linkGuardianStudentWithExistingPin(
+              challengeId: _challengeId!,
+              verificationToken: _verificationToken!,
+              pin: pin,
+            )
+          : await auth.setGuardianPin(
+              challengeId: _challengeId!,
+              verificationToken: _verificationToken!,
+              pin: pin,
+            );
 
       setState(() {
         _pinResult = result;
@@ -988,7 +1020,7 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
                               ),
                               SizedBox(height: 8.h),
                               Text(
-                                'Confirme o vínculo com o aluno e defina seu PIN pessoal.',
+                                'Confirme o vínculo com o aluno e finalize seu acesso.',
                                 style: GoogleFonts.inter(
                                   color: const Color(0xFF6F7480),
                                   fontSize: 12.sp,
@@ -1247,6 +1279,9 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
       );
     }
 
+    final requiresExistingPin =
+        _verificationResult?.requiresExistingPin ?? false;
+
     return Form(
       key: _pinFormKey,
       child: Column(
@@ -1255,16 +1290,20 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
         children: [
           _SelectedGuardianSummary(guardian: _selectedGuardian),
           SizedBox(height: 16.h),
-          const _InfoCard(
+          _InfoCard(
             icon: Icons.lock_outline_rounded,
-            title: 'Crie seu PIN',
-            description:
-                'Use 6 dígitos numéricos. Esse PIN será usado no próximo login junto com o CPF.',
+            title:
+                requiresExistingPin ? 'Confirme seu PIN atual' : 'Crie seu PIN',
+            description: requiresExistingPin
+                ? 'Encontramos uma conta ativa para este CPF. Informe o PIN já cadastrado para vincular este aluno.'
+                : 'Use 6 dígitos numéricos. Esse PIN será usado no próximo login junto com o CPF.',
           ),
           SizedBox(height: 16.h),
           CustomTextFormField(
             controller: _pinController,
-            hintText: 'PIN de 6 dígitos',
+            hintText: requiresExistingPin
+                ? 'PIN atual de 6 dígitos'
+                : 'PIN de 6 dígitos',
             icon: Icons.pin_outlined,
             isPassword: true,
             obscureText: !_isPinVisible,
@@ -1279,37 +1318,41 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
             },
             validator: (value) {
               if ((value ?? '').trim().length != 6) {
-                return 'O PIN precisa ter 6 dígitos.';
+                return requiresExistingPin
+                    ? 'Informe o PIN atual com 6 dígitos.'
+                    : 'O PIN precisa ter 6 dígitos.';
               }
               return null;
             },
           ),
-          SizedBox(height: 16.h),
-          CustomTextFormField(
-            controller: _confirmPinController,
-            hintText: 'Confirme o PIN',
-            icon: Icons.verified_user_outlined,
-            isPassword: true,
-            obscureText: !_isConfirmPinVisible,
-            keyboardType: TextInputType.number,
-            maxLength: 6,
-            inputFormatters: [
-              FilteringTextInputFormatter.digitsOnly,
-              LengthLimitingTextInputFormatter(6),
-            ],
-            onToggleVisibility: () {
-              setState(() => _isConfirmPinVisible = !_isConfirmPinVisible);
-            },
-            validator: (value) {
-              if ((value ?? '').trim().length != 6) {
-                return 'Repita o PIN com 6 dígitos.';
-              }
-              if ((value ?? '').trim() != _pinController.text.trim()) {
-                return 'Os PINs precisam ser iguais.';
-              }
-              return null;
-            },
-          ),
+          if (!requiresExistingPin) ...[
+            SizedBox(height: 16.h),
+            CustomTextFormField(
+              controller: _confirmPinController,
+              hintText: 'Confirme o PIN',
+              icon: Icons.verified_user_outlined,
+              isPassword: true,
+              obscureText: !_isConfirmPinVisible,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(6),
+              ],
+              onToggleVisibility: () {
+                setState(() => _isConfirmPinVisible = !_isConfirmPinVisible);
+              },
+              validator: (value) {
+                if ((value ?? '').trim().length != 6) {
+                  return 'Repita o PIN com 6 dígitos.';
+                }
+                if ((value ?? '').trim() != _pinController.text.trim()) {
+                  return 'Os PINs precisam ser iguais.';
+                }
+                return null;
+              },
+            ),
+          ],
           SizedBox(height: 22.h),
           Row(
             children: [
@@ -1334,9 +1377,9 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
               SizedBox(width: 12.w),
               Expanded(
                 child: _PrimaryActionButton(
-                  label: 'Criar PIN',
+                  label: requiresExistingPin ? 'Vincular aluno' : 'Criar PIN',
                   isLoading: _isLoading,
-                  onPressed: _setGuardianPin,
+                  onPressed: _submitGuardianPinStep,
                 ),
               ),
             ],
@@ -1347,6 +1390,20 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
   }
 
   Widget _buildSuccessStep() {
+    final resultStatus = _pinResult?.status ?? '';
+    final isExistingAccountFlow = resultStatus == 'student_linked' ||
+        resultStatus == 'student_already_linked';
+    final successTitle = resultStatus == 'student_already_linked'
+        ? 'Aluno já disponível'
+        : 'Próximo login';
+    final successHeadline =
+        isExistingAccountFlow ? 'CPF + PIN atual' : 'CPF + PIN';
+    final successBody = resultStatus == 'student_already_linked'
+        ? 'Este aluno já estava vinculado à sua conta. Volte ao login e entre com o CPF e o PIN atual.'
+        : isExistingAccountFlow
+            ? 'Volte para a tela de login e use seu CPF com o PIN que você já utiliza nessa conta.'
+            : 'Volte para a tela de login e use seu CPF com o PIN que acabou de criar.';
+
     return Column(
       key: const ValueKey('guardian_step_success'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1374,7 +1431,7 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Próximo login',
+                successTitle,
                 style: GoogleFonts.inter(
                   color: const Color(0xFF8B8D96),
                   fontSize: 12.sp,
@@ -1383,7 +1440,7 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
               ),
               SizedBox(height: 8.h),
               Text(
-                'CPF + PIN',
+                successHeadline,
                 style: TextStyle(
                   color: const Color(0xFF1E1E1E),
                   fontSize: 26.sp,
@@ -1402,7 +1459,7 @@ class _GuardianFirstAccessSheetState extends State<GuardianFirstAccessSheet> {
               ),
               SizedBox(height: 8.h),
               Text(
-                'Volte para a tela de login e use seu CPF com o PIN que acabou de criar.',
+                successBody,
                 style: GoogleFonts.inter(
                   color: const Color(0xFF6F7480),
                   fontSize: 13.sp,

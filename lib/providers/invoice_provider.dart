@@ -75,12 +75,14 @@ class InvoiceProvider extends ChangeNotifier {
 
   Future<void> fetchGuardianInvoices({
     required String token,
+    String? studentId,
   }) async {
     _setLoading(true);
     setError(null);
     try {
       _guardianInvoices = await _invoiceService.getGuardianInvoices(
         token: token,
+        studentId: studentId,
       );
     } catch (e) {
       setError(e.toString().replaceAll('Exception: ', ''));
@@ -268,6 +270,7 @@ class InvoiceProvider extends ChangeNotifier {
   Future<void> generateGuardianBatchPdf({
     required List<String> invoiceIds,
     required String token,
+    String? studentId,
   }) async {
     _setLoading(true);
     setError(null);
@@ -276,6 +279,7 @@ class InvoiceProvider extends ChangeNotifier {
       final Uint8List pdfBytes = await _invoiceService.downloadGuardianBatchPdf(
         invoiceIds: invoiceIds,
         token: token,
+        studentId: studentId,
       );
 
       await Printing.layoutPdf(

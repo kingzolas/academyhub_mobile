@@ -70,8 +70,14 @@ class InvoiceService {
 
   Future<List<Invoice>> getGuardianInvoices({
     required String token,
+    String? studentId,
   }) async {
-    final url = Uri.parse('$_baseUrl/guardian-auth/invoices');
+    final normalizedStudentId = (studentId ?? '').trim();
+    final url = Uri.parse('$_baseUrl/guardian-auth/invoices').replace(
+      queryParameters: normalizedStudentId.isEmpty
+          ? null
+          : {'studentId': normalizedStudentId},
+    );
     final headers = _getHeaders(token);
 
     final response = await http.get(url, headers: headers);
@@ -216,10 +222,14 @@ class InvoiceService {
   Future<Uint8List> downloadGuardianBatchPdf({
     required List<String> invoiceIds,
     required String token,
+    String? studentId,
   }) async {
     final url = Uri.parse('$_baseUrl/guardian-auth/invoices/batch-print');
     final headers = _getHeaders(token);
-    final body = jsonEncode({'invoiceIds': invoiceIds});
+    final body = jsonEncode({
+      'invoiceIds': invoiceIds,
+      if ((studentId ?? '').trim().isNotEmpty) 'studentId': studentId!.trim(),
+    });
 
     final response = await http.post(url, headers: headers, body: body);
 

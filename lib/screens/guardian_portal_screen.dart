@@ -1,9 +1,9 @@
-import 'dart:ui';
-
 import 'package:academyhub_mobile/model/guardian_auth_model.dart';
 import 'package:academyhub_mobile/model/invoice_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/invoice_provider.dart';
+import 'package:academyhub_mobile/providers/school_provider.dart';
+import 'package:academyhub_mobile/providers/theme_provider.dart';
 import 'package:academyhub_mobile/screens/guardian_activities_screen.dart';
 import 'package:academyhub_mobile/screens/guardian_attendance_screen.dart';
 import 'package:academyhub_mobile/screens/guardian_schedule_screen.dart';
@@ -13,7 +13,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -66,10 +65,6 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   @override
   void initState() {
     super.initState();
-    SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.dark,
-    ));
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _refreshGuardianPortal();
@@ -77,10 +72,14 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   }
 
   Future<void> _refreshGuardianPortal() async {
-    await Future.wait([
-      _loadGuardianInvoices(),
-      _loadGuardianPortalData(studentId: _selectedStudentId),
-    ]);
+    final auth = context.read<AuthProvider>();
+    final preferredStudentId = (_selectedStudentId ??
+            auth.guardianSelectedStudentId ??
+            auth.guardianSession?.defaultStudent?.id)
+        ?.trim();
+
+    await _loadGuardianPortalData(studentId: preferredStudentId);
+    await _loadGuardianInvoices(studentId: _selectedStudentId);
   }
 
   Future<void> _loadGuardianPortalData({String? studentId}) async {
@@ -110,16 +109,25 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
         token: token,
         studentId: studentId,
       );
+      final preferredStudentId =
+          (studentId ?? auth.guardianSelectedStudentId ?? '').trim();
+      final resolvedStudentId = result.linkedStudents.any(
+        (student) => student.id == preferredStudentId,
+      )
+          ? preferredStudentId
+          : (result.selectedStudent?.id ??
+              (result.linkedStudents.isNotEmpty
+                  ? result.linkedStudents.first.id
+                  : null));
 
       if (!mounted) return;
       setState(() {
         _portalHome = result;
-        _selectedStudentId = result.selectedStudent?.id ??
-            (result.linkedStudents.isNotEmpty
-                ? result.linkedStudents.first.id
-                : null);
+        _selectedStudentId = resolvedStudentId;
         _isPortalLoading = false;
       });
+
+      await auth.setGuardianSelectedStudentId(resolvedStudentId);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -129,7 +137,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     }
   }
 
-  Future<void> _loadGuardianInvoices() async {
+  Future<void> _loadGuardianInvoices({String? studentId}) async {
     final auth = context.read<AuthProvider>();
     final invoices = context.read<InvoiceProvider>();
 
@@ -140,7 +148,10 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       return;
     }
 
-    await invoices.fetchGuardianInvoices(token: auth.token!);
+    await invoices.fetchGuardianInvoices(
+      token: auth.token!,
+      studentId: studentId,
+    );
   }
 
   void _onTabTapped(int index) {
@@ -186,6 +197,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       await invoices.generateGuardianBatchPdf(
         invoiceIds: [invoice.id],
         token: auth.token!,
+        studentId: _selectedStudent?.id,
       );
 
       if (!mounted) return;
@@ -247,14 +259,17 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
 
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: _guardianSurface(context),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28.r)),
       ),
       builder: (context) {
+        final primaryText = _guardianTextPrimary(context);
+        final secondaryText = _guardianTextSecondary(context);
+
         return SafeArea(
           child: Padding(
-            padding: EdgeInsets.fromLTRB(20.w, 16.h, 20.w, 24.h),
+            padding: EdgeInsets.fromLTRB(20.w, 14.h, 20.w, 20.h),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -264,32 +279,31 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                     width: 44.w,
                     height: 5.h,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD1D5DB),
+                      color: _guardianBorder(context),
                       borderRadius: BorderRadius.circular(999.r),
                     ),
                   ),
                 ),
-                SizedBox(height: 18.h),
+                SizedBox(height: 14.h),
                 Text(
-                  'Escolha o aluno',
-                  style: TextStyle(
-                    color: const Color(0xFF111827),
-                    fontSize: 24.sp,
-                    fontFamily: 'GR Milesons Three',
-                    fontWeight: FontWeight.w400,
+                  'Trocar aluno',
+                  style: GoogleFonts.inter(
+                    color: primaryText,
+                    fontSize: 18.sp,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                SizedBox(height: 8.h),
+                SizedBox(height: 6.h),
                 Text(
-                  'Use esse contexto para acompanhar horários, frequência e atividades.',
+                  'Escolha quem você quer acompanhar agora.',
                   style: GoogleFonts.inter(
-                    fontSize: 13.sp,
+                    fontSize: 11.5.sp,
                     fontWeight: FontWeight.w500,
-                    color: const Color(0xFF6B7280),
+                    color: secondaryText,
                     height: 1.45,
                   ),
                 ),
-                SizedBox(height: 16.h),
+                SizedBox(height: 12.h),
                 ...students.map(
                   (student) => Padding(
                     padding: EdgeInsets.only(bottom: 10.h),
@@ -299,7 +313,11 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                       onTap: () async {
                         Navigator.of(context).pop();
                         setState(() => _selectedStudentId = student.id);
+                        await context
+                            .read<AuthProvider>()
+                            .setGuardianSelectedStudentId(student.id);
                         await _loadGuardianPortalData(studentId: student.id);
+                        await _loadGuardianInvoices(studentId: student.id);
                       },
                     ),
                   ),
@@ -312,89 +330,217 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     );
   }
 
-  PreferredSizeWidget _buildAppBar(GuardianSession? session) {
-    final student = _selectedStudent;
-    final schoolName = (session?.schoolName ?? '').trim();
-    final studentContext =
-        student?.classInfo?.name ?? student?.relationship ?? '';
-    final subtitle = [
-      if (schoolName.isNotEmpty) schoolName,
-      _currentSectionLabel,
-      if (studentContext.trim().isNotEmpty) studentContext,
+  Future<void> _showPinSecurityInfo() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: _guardianSurface(context),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28.r)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(24.w, 18.h, 24.w, 28.h),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 44.w,
+                    height: 5.h,
+                    decoration: BoxDecoration(
+                      color: _guardianBorder(context),
+                      borderRadius: BorderRadius.circular(999.r),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 18.h),
+                Text(
+                  'Segurança em preparação',
+                  style: GoogleFonts.inter(
+                    fontSize: 20.sp,
+                    fontWeight: FontWeight.w700,
+                    color: _guardianTextPrimary(context),
+                  ),
+                ),
+                SizedBox(height: 10.h),
+                Text(
+                  'A alteração de PIN por e-mail ainda depende de um fluxo seguro no backend para envio e validação do código.',
+                  style: GoogleFonts.inter(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w500,
+                    color: _guardianTextSecondary(context),
+                    height: 1.5,
+                  ),
+                ),
+                SizedBox(height: 12.h),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.all(16.r),
+                  decoration: BoxDecoration(
+                    color: _guardianSoftSurface(context),
+                    borderRadius: BorderRadius.circular(18.r),
+                    border: Border.all(color: _guardianBorder(context)),
+                  ),
+                  child: Text(
+                    'Assim que esse backend estiver pronto, esta área poderá enviar um código para o e-mail verificado do responsável e permitir a definição de um novo PIN.',
+                    style: GoogleFonts.inter(
+                      fontSize: 12.sp,
+                      fontWeight: FontWeight.w500,
+                      color: _guardianTextSecondary(context),
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+                SizedBox(height: 18.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: ElevatedButton.styleFrom(
+                      elevation: 0,
+                      backgroundColor: const Color(0xFF00A859),
+                      foregroundColor: Colors.white,
+                      minimumSize: Size.fromHeight(46.h),
+                    ),
+                    child: const Text('Entendi'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ignore: unused_element
+  PreferredSizeWidget _buildLegacyAppBar(GuardianSession? session) {
+    /*
+      if ((student?.classInfo?.name ?? '').trim().isNotEmpty)
+        student!.classInfo!.name,
+      if ((student?.classInfo?.shift ?? '').trim().isNotEmpty)
+        student!.classInfo!.shift,
+      if ((student?.relationship ?? '').trim().isNotEmpty)
+        student!.relationship,
     ].join(' · ');
+    final subtitle = studentContext.isNotEmpty
+        ? studentContext
+        : (schoolName.isNotEmpty ? schoolName : 'Academy Hub');
+    */
+    final isDark = _isDarkContext(context);
 
     return AppBar(
       backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
       elevation: 0,
-      toolbarHeight: 94.h,
+      scrolledUnderElevation: 0,
+      toolbarHeight: 66.h,
       automaticallyImplyLeading: false,
-      flexibleSpace: ClipRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-          child: Container(
-            color: Colors.white.withValues(alpha: 0.76),
-            padding: EdgeInsets.fromLTRB(20.w, 16.h, 20.w, 12.h),
-            child: SafeArea(
-              bottom: false,
-              child: Row(
-                children: [
-                  Container(
-                    width: 44.w,
-                    height: 44.w,
-                    padding: EdgeInsets.all(10.r),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE8F7EF),
-                      borderRadius: BorderRadius.circular(14.r),
+      systemOverlayStyle:
+          isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      flexibleSpace: Container(
+        decoration: BoxDecoration(
+          color: _guardianAppBarBackground(context),
+          border: Border(
+            bottom: BorderSide(color: _guardianBorder(context)),
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(20.w, 6.h, 20.w, 8.h),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Portal do responsável',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 11.sp,
+                        fontWeight: FontWeight.w700,
+                        color: _guardianTextSecondary(context),
+                      ),
                     ),
-                    child: SvgPicture.asset(
-                      'lib/assets/logo_chapeu_academy.svg',
+                    SizedBox(height: 2.h),
+                    Text(
+                      _currentSectionLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _guardianTextPrimary(context),
+                        fontSize: 18.sp,
+                        fontFamily: 'GR Milesons Three',
+                        fontWeight: FontWeight.w400,
+                      ),
                     ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar(GuardianSession? session) {
+    final isDark = _isDarkContext(context);
+
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      toolbarHeight: 54.h,
+      automaticallyImplyLeading: false,
+      systemOverlayStyle:
+          isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
+      flexibleSpace: Container(
+        decoration: BoxDecoration(
+          color: _guardianAppBarBackground(context),
+          border: Border(
+            bottom: BorderSide(color: _guardianBorder(context)),
+          ),
+        ),
+        child: SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(20.w, 3.h, 20.w, 4.h),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  'Responsável',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    fontSize: 10.sp,
+                    fontWeight: FontWeight.w700,
+                    color: _guardianTextSecondary(context),
                   ),
-                  SizedBox(width: 14.w),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          'PORTAL DO RESPONSÁVEL',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
-                            fontSize: 10.sp,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.9,
-                            color: const Color(0xFF00A859),
-                          ),
-                        ),
-                        SizedBox(height: 3.h),
-                        Text(
-                          student?.firstName ?? 'Acompanhamento do aluno',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: const Color(0xFF1B1F24),
-                            fontSize: 19.sp,
-                            fontFamily: 'GR Milesons Three',
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-                        SizedBox(height: 3.h),
-                        Text(
-                          subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
-                            fontSize: 12.sp,
-                            fontWeight: FontWeight.w600,
-                            color: const Color(0xFF6B7280),
-                          ),
-                        ),
-                      ],
-                    ),
+                ),
+                SizedBox(height: 1.h),
+                Text(
+                  _currentSectionLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: _guardianTextPrimary(context),
+                    fontSize: 16.5.sp,
+                    fontFamily: 'GR Milesons Three',
+                    fontWeight: FontWeight.w400,
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
@@ -415,33 +561,26 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       onRefresh: _refreshGuardianPortal,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(20.w, 118.h, 20.w, 128.h),
+        padding: EdgeInsets.fromLTRB(20.w, 84.h, 20.w, 128.h),
         children: [
           _buildHeaderBlock(
-            title: 'Acompanhe o dia do aluno',
-            subtitle:
-                'Veja a próxima aula, a frequência, as atividades e um resumo financeiro em poucos toques.',
+            title: 'Resumo do dia',
+            subtitle: selectedStudent == null
+                ? 'Veja rapidamente aula, frequência, atividades e o financeiro do aluno.'
+                : 'Acompanhe os principais sinais do dia de ${selectedStudent.firstName} em poucos toques.',
           ),
-          SizedBox(height: 18.h),
-          if (selectedStudent != null)
-            _GuardianStudentContextCard(
-              student: selectedStudent,
-              linkedStudentsCount: home?.linkedStudents.length ?? 0,
-              onChangeStudent: (home?.linkedStudents.length ?? 0) > 1
-                  ? _showStudentPicker
-                  : null,
-            )
-          else if (_isPortalLoading)
+          SizedBox(height: 14.h),
+          if (selectedStudent == null && _isPortalLoading)
             const _GuardianLoadingCard(
               label: 'Carregando o contexto do aluno...',
             )
-          else
+          else if (selectedStudent == null)
             const _EmptyStateCard(
               title: 'Nenhum aluno disponível',
               message:
                   'Quando houver um vínculo acadêmico ativo para este acesso, ele aparecerá aqui.',
             ),
-          SizedBox(height: 18.h),
+          SizedBox(height: 14.h),
           if (_portalError != null && home == null)
             _ErrorCard(
               message: _portalError!,
@@ -472,7 +611,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               schedule: home?.schedule,
               onOpenSchedule: _openScheduleScreen,
             ),
-            SizedBox(height: 12.h),
+            SizedBox(height: 10.h),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -511,7 +650,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               ],
             ),
           ],
-          SizedBox(height: 18.h),
+          SizedBox(height: 14.h),
           _buildSectionLabel('Resumo do portal'),
           SizedBox(height: 10.h),
           Row(
@@ -537,7 +676,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               ),
             ],
           ),
-          SizedBox(height: 18.h),
+          SizedBox(height: 14.h),
           _buildSectionLabel('Financeiro em destaque'),
           SizedBox(height: 10.h),
           if (invoiceProvider.error != null &&
@@ -601,27 +740,20 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       onRefresh: _refreshGuardianPortal,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(20.w, 118.h, 20.w, 128.h),
+        padding: EdgeInsets.fromLTRB(20.w, 84.h, 20.w, 128.h),
         children: [
           _buildHeaderBlock(
             title: 'Acompanhar',
-            subtitle:
-                'Entre nas áreas acadêmicas do aluno com uma visão clara do que está acontecendo agora.',
+            subtitle: selectedStudent == null
+                ? 'Entre nas áreas acadêmicas com uma visão clara do que está acontecendo agora.'
+                : 'Abra grade, frequência e atividades de ${selectedStudent.firstName} sem perder o contexto atual.',
           ),
           SizedBox(height: 18.h),
-          if (selectedStudent != null)
-            _GuardianStudentContextCard(
-              student: selectedStudent,
-              linkedStudentsCount: home?.linkedStudents.length ?? 0,
-              onChangeStudent: (home?.linkedStudents.length ?? 0) > 1
-                  ? _showStudentPicker
-                  : null,
-            )
-          else if (_isPortalLoading)
+          if (selectedStudent == null && _isPortalLoading)
             const _GuardianLoadingCard(
               label: 'Carregando dados de acompanhamento...',
             )
-          else
+          else if (selectedStudent == null)
             const _EmptyStateCard(
               title: 'Sem contexto acadêmico',
               message:
@@ -683,7 +815,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       onRefresh: _refreshGuardianPortal,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: EdgeInsets.fromLTRB(20.w, 112.h, 20.w, 128.h),
+        padding: EdgeInsets.fromLTRB(20.w, 84.h, 20.w, 128.h),
         children: [
           _buildHeaderBlock(
             title: 'Financeiro',
@@ -750,58 +882,151 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   }
 
   Widget _buildAccountTab(AuthProvider auth, GuardianSession? session) {
+    final themeProvider = context.watch<ThemeProvider>();
+    final schoolProvider = context.watch<SchoolProvider>();
+    final providerSchool = schoolProvider.currentSchool;
+    final sessionSchoolName = (session?.schoolName ?? '').trim();
+    final resolvedSchoolName = sessionSchoolName.isNotEmpty
+        ? sessionSchoolName
+        : ((providerSchool?.name ?? '').trim().isNotEmpty
+            ? providerSchool!.name
+            : 'Academy Hub');
+    final providerMatchesSession = providerSchool != null &&
+        ((session?.schoolPublicId ?? '').trim().isNotEmpty
+            ? providerSchool.publicIdentifier == session!.schoolPublicId
+            : providerSchool.name.trim().toLowerCase() ==
+                resolvedSchoolName.toLowerCase());
+    final schoolLogoBytes =
+        providerMatchesSession ? providerSchool.logoBytes : null;
+    final currentStudent = _selectedStudent;
+    final linkedStudentsCount = session?.linkedStudentsCount ?? 0;
+    final currentStudentLabel = currentStudent == null
+        ? 'Nenhum aluno selecionado'
+        : [
+            currentStudent.fullName,
+            if ((currentStudent.classInfo?.name ?? '').trim().isNotEmpty)
+              currentStudent.classInfo!.name,
+          ].join(' · ');
+
     return ListView(
-      padding: EdgeInsets.fromLTRB(20.w, 112.h, 20.w, 128.h),
+      padding: EdgeInsets.fromLTRB(20.w, 84.h, 20.w, 128.h),
       children: [
         _buildHeaderBlock(
-          title: 'Conta do responsável',
+          title: 'Conta e preferências',
           subtitle:
-              'Gerencie seu acesso com segurança. Este portal é próprio do responsável e permanece separado do portal do aluno.',
+              'Ajuste aparência, segurança e sessão do seu acesso sem mexer no contexto acadêmico do portal.',
         ),
         SizedBox(height: 18.h),
-        _InfoCard(
-          label: 'Identificador',
-          value: session?.identifierMasked ?? '--',
+        _GuardianAccountContextCard(
+          schoolName: resolvedSchoolName,
+          schoolLogoBytes: schoolLogoBytes,
+          currentStudent: currentStudent,
+          linkedStudentsCount: linkedStudentsCount,
         ),
-        SizedBox(height: 12.h),
-        _InfoCard(
-          label: 'Status do acesso',
-          value: _buildAccessStatusLabel(session?.status ?? 'active'),
-        ),
-        SizedBox(height: 12.h),
-        _InfoCard(
-          label: 'Vínculos encontrados',
-          value: '${session?.linkedStudentsCount ?? 0}',
-        ),
-        SizedBox(height: 12.h),
-        _InfoCard(
-          label: 'Escola',
-          value: (session?.schoolName ?? '').trim().isEmpty
-              ? 'Academy Hub'
-              : session!.schoolName,
-        ),
-        SizedBox(height: 24.h),
-        SizedBox(
-          height: 50.h,
-          child: ElevatedButton(
-            onPressed: () => auth.logout(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1B1F24),
-              foregroundColor: Colors.white,
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16.r),
+        SizedBox(height: 14.h),
+        _SettingsSectionCard(
+          title: 'Contexto atual',
+          subtitle:
+              'Troque o aluno acompanhado sem sair do portal quando precisar.',
+          child: Column(
+            children: [
+              _SettingsActionRow(
+                icon: PhosphorIcons.student_fill,
+                title: linkedStudentsCount > 1 ? 'Trocar aluno' : 'Aluno atual',
+                subtitle: currentStudentLabel,
+                badgeLabel: linkedStudentsCount > 1 ? 'Alternar' : null,
+                onTap: linkedStudentsCount > 1 ? _showStudentPicker : null,
               ),
-            ),
-            child: Text(
-              'Encerrar sessão',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 20.sp,
-                fontFamily: 'GR Milesons Three',
-                fontWeight: FontWeight.w400,
+            ],
+          ),
+        ),
+        SizedBox(height: 14.h),
+        _SettingsSectionCard(
+          title: 'Conta',
+          child: Column(
+            children: [
+              _SettingsInfoRow(
+                icon: PhosphorIcons.identification_card_fill,
+                label: 'Identificador',
+                value: session?.identifierMasked ?? '--',
               ),
-            ),
+              _SettingsInfoRow(
+                icon: PhosphorIcons.users_three_fill,
+                label: 'Alunos vinculados',
+                value: '$linkedStudentsCount',
+              ),
+              const _SettingsInfoRow(
+                icon: PhosphorIcons.envelope_simple_fill,
+                label: 'E-mail para recuperação',
+                value:
+                    'Disponível quando o backend validar o endereço do responsável.',
+                helper:
+                    'Ainda não há um fluxo seguro publicado para envio de código por e-mail.',
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 14.h),
+        _SettingsSectionCard(
+          title: 'Aparência',
+          subtitle:
+              'Use o mesmo sistema de tema já disponível no restante do app.',
+          child: _ThemeModeSelector(
+            themeMode: themeProvider.themeMode,
+            onThemeModeSelected: themeProvider.setThemeMode,
+          ),
+        ),
+        SizedBox(height: 14.h),
+        _SettingsSectionCard(
+          title: 'Segurança',
+          child: Column(
+            children: [
+              _SettingsInfoRow(
+                icon: PhosphorIcons.shield_check_fill,
+                label: 'Status do acesso',
+                value: _buildAccessStatusLabel(session?.status ?? 'active'),
+              ),
+              _SettingsActionRow(
+                icon: PhosphorIcons.password_fill,
+                title: 'Alterar PIN',
+                subtitle:
+                    'Este fluxo vai usar código por e-mail assim que o backend publicar a validação segura.',
+                badgeLabel: 'Em breve',
+                onTap: _showPinSecurityInfo,
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: 14.h),
+        _SettingsSectionCard(
+          title: 'Sessão',
+          child: Column(
+            children: [
+              SizedBox(height: 2.h),
+              SizedBox(
+                height: 48.h,
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => auth.logout(context),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1B1F24),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16.r),
+                    ),
+                  ),
+                  child: Text(
+                    'Encerrar sessão',
+                    style: GoogleFonts.inter(
+                      color: Colors.white,
+                      fontSize: 14.sp,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -817,21 +1042,20 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       children: [
         Text(
           title,
-          style: TextStyle(
-            color: const Color(0xFF1B1F24),
-            fontSize: 28.sp,
-            fontFamily: 'GR Milesons Three',
-            fontWeight: FontWeight.w400,
+          style: GoogleFonts.inter(
+            color: _guardianTextPrimary(context),
+            fontSize: 18.sp,
+            fontWeight: FontWeight.w700,
           ),
         ),
-        SizedBox(height: 8.h),
+        SizedBox(height: 3.h),
         Text(
           subtitle,
           style: GoogleFonts.inter(
-            fontSize: 13.sp,
+            fontSize: 11.5.sp,
             fontWeight: FontWeight.w500,
-            color: const Color(0xFF6B7280),
-            height: 1.5,
+            color: _guardianTextSecondary(context),
+            height: 1.35,
           ),
         ),
       ],
@@ -843,8 +1067,8 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       label,
       style: GoogleFonts.inter(
         fontSize: 15.sp,
-        fontWeight: FontWeight.w800,
-        color: const Color(0xFF111827),
+        fontWeight: FontWeight.w700,
+        color: _guardianTextPrimary(context),
       ),
     );
   }
@@ -852,7 +1076,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   void _showInvoiceDetails(Invoice invoice) {
     showModalBottomSheet<void>(
       context: context,
-      backgroundColor: Colors.white,
+      backgroundColor: _guardianSurface(context),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28.r)),
       ),
@@ -869,7 +1093,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                     width: 48.w,
                     height: 5.h,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFD1D5DB),
+                      color: _guardianBorder(context),
                       borderRadius: BorderRadius.circular(999.r),
                     ),
                   ),
@@ -877,11 +1101,10 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                 SizedBox(height: 22.h),
                 Text(
                   'Detalhes do boleto',
-                  style: TextStyle(
-                    color: const Color(0xFF1B1F24),
-                    fontSize: 24.sp,
-                    fontFamily: 'GR Milesons Three',
-                    fontWeight: FontWeight.w400,
+                  style: GoogleFonts.inter(
+                    color: _guardianTextPrimary(context),
+                    fontSize: 20.sp,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
                 SizedBox(height: 12.h),
@@ -919,10 +1142,13 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     final accent = _buildStatusColor(state);
 
     return Container(
-      padding: EdgeInsets.all(20.r),
+      padding: EdgeInsets.all(16.r),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [accent.withValues(alpha: 0.14), Colors.white],
+          colors: [
+            accent.withValues(alpha: _isDarkContext(context) ? 0.18 : 0.14),
+            _guardianSurface(context),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -939,17 +1165,16 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
             style: GoogleFonts.inter(
               fontSize: 12.sp,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFF6B7280),
+              color: _guardianTextSecondary(context),
             ),
           ),
           SizedBox(height: 6.h),
           Text(
             invoice.description,
-            style: TextStyle(
-              color: const Color(0xFF1B1F24),
-              fontSize: 28.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+            style: GoogleFonts.inter(
+              color: _guardianTextPrimary(context),
+              fontSize: 22.sp,
+              fontWeight: FontWeight.w800,
             ),
           ),
           SizedBox(height: 14.h),
@@ -958,7 +1183,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
             style: GoogleFonts.inter(
               fontSize: 24.sp,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF111827),
+              color: _guardianTextPrimary(context),
             ),
           ),
           SizedBox(height: 4.h),
@@ -966,8 +1191,8 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
             _buildDueText(invoice),
             style: GoogleFonts.inter(
               fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF6B7280),
+              fontWeight: FontWeight.w500,
+              color: _guardianTextSecondary(context),
             ),
           ),
           SizedBox(height: 18.h),
@@ -1019,11 +1244,10 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       children: [
         Text(
           title,
-          style: TextStyle(
-            color: const Color(0xFF1B1F24),
-            fontSize: 22.sp,
-            fontFamily: 'GR Milesons Three',
-            fontWeight: FontWeight.w400,
+          style: GoogleFonts.inter(
+            color: _guardianTextPrimary(context),
+            fontSize: 18.sp,
+            fontWeight: FontWeight.w700,
           ),
         ),
         SizedBox(height: 10.h),
@@ -1201,7 +1425,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     final session = auth.guardianSession;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F7FB),
+      backgroundColor: _guardianScreenBackground(context),
       extendBody: true,
       extendBodyBehindAppBar: true,
       appBar: _buildAppBar(session),
@@ -1227,6 +1451,9 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               isGuardian: true,
               onGuardianRefresh: _refreshGuardianPortal,
               onGuardianAccount: () => _onTabTapped(3),
+              onGuardianStudentSwitcher: (session?.linkedStudentsCount ?? 0) > 1
+                  ? _showStudentPicker
+                  : null,
             ),
           ),
         ],
@@ -1250,6 +1477,42 @@ class _GuardianInvoiceGroups {
 }
 
 enum _InvoiceState { pending, overdue, paid, canceled }
+
+bool _isDarkContext(BuildContext context) =>
+    Theme.of(context).brightness == Brightness.dark;
+
+Color _guardianScreenBackground(BuildContext context) =>
+    _isDarkContext(context) ? const Color(0xFF0B1117) : const Color(0xFFF4F7FB);
+
+Color _guardianSurface(BuildContext context) => Theme.of(context).cardColor;
+
+Color _guardianSoftSurface(BuildContext context) =>
+    _isDarkContext(context) ? const Color(0xFF121A23) : const Color(0xFFF8FAFC);
+
+Color _guardianBorder(BuildContext context) =>
+    _isDarkContext(context) ? const Color(0xFF223042) : const Color(0xFFE5E7EB);
+
+Color _guardianTextPrimary(BuildContext context) =>
+    Theme.of(context).colorScheme.onSurface;
+
+Color _guardianTextSecondary(BuildContext context) =>
+    _isDarkContext(context) ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
+
+Color _guardianAppBarBackground(BuildContext context) => _isDarkContext(context)
+    ? const Color(0xFF0B1117).withValues(alpha: 0.96)
+    : Colors.white.withValues(alpha: 0.94);
+
+String _guardianInitials(String? value) {
+  final parts = (value ?? '')
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return 'A';
+  if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+  return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+      .toUpperCase();
+}
 
 List<Invoice> _sortInvoices(
   Iterable<Invoice> invoices, {
@@ -1371,78 +1634,140 @@ String _formatCurrency(int valueInCents) {
       .format(valueInCents / 100);
 }
 
-class _GuardianStudentContextCard extends StatelessWidget {
-  final GuardianLinkedStudent student;
+class _GuardianAccountContextCard extends StatelessWidget {
+  final String schoolName;
+  final Uint8List? schoolLogoBytes;
+  final GuardianLinkedStudent? currentStudent;
   final int linkedStudentsCount;
-  final VoidCallback? onChangeStudent;
 
-  const _GuardianStudentContextCard({
-    required this.student,
+  const _GuardianAccountContextCard({
+    required this.schoolName,
+    required this.schoolLogoBytes,
+    required this.currentStudent,
     required this.linkedStudentsCount,
-    required this.onChangeStudent,
   });
 
   @override
   Widget build(BuildContext context) {
-    final classInfo = student.classInfo;
-    final details = [
-      if (student.relationship.trim().isNotEmpty) student.relationship,
-      if ((classInfo?.name ?? '').trim().isNotEmpty) classInfo!.name,
-      if ((classInfo?.shift ?? '').trim().isNotEmpty) classInfo!.shift,
-    ];
+    final studentLabel = currentStudent == null
+        ? 'Nenhum aluno selecionado'
+        : currentStudent!.firstName;
 
     return Container(
-      padding: EdgeInsets.all(18.r),
+      padding: EdgeInsets.all(14.r),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24.r),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        color: _guardianSurface(context),
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(color: _guardianBorder(context)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Aluno em foco',
-                  style: GoogleFonts.inter(
-                    fontSize: 12.sp,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF00A859),
+          Container(
+            width: 46.w,
+            height: 46.w,
+            decoration: BoxDecoration(
+              color: _guardianSoftSurface(context),
+              shape: BoxShape.circle,
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: schoolLogoBytes != null && schoolLogoBytes!.isNotEmpty
+                ? Image.memory(
+                    schoolLogoBytes!,
+                    fit: BoxFit.cover,
+                  )
+                : Center(
+                    child: Text(
+                      _guardianInitials(schoolName),
+                      style: GoogleFonts.inter(
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.w800,
+                        color: const Color(0xFF00A859),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              if (onChangeStudent != null)
-                TextButton.icon(
-                  onPressed: onChangeStudent,
-                  icon: Icon(PhosphorIcons.arrows_left_right, size: 14.sp),
-                  label: Text(
-                    linkedStudentsCount > 1 ? 'Trocar aluno' : 'Ver aluno',
-                  ),
-                ),
-            ],
           ),
-          SizedBox(height: 8.h),
-          Text(
-            student.fullName,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: const Color(0xFF1B1F24),
-              fontSize: 24.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+          SizedBox(width: 12.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Escola atual',
+                  style: GoogleFonts.inter(
+                    fontSize: 11.sp,
+                    fontWeight: FontWeight.w700,
+                    color: _guardianTextSecondary(context),
+                  ),
+                ),
+                SizedBox(height: 3.h),
+                Text(
+                  schoolName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.w700,
+                    color: _guardianTextPrimary(context),
+                  ),
+                ),
+                SizedBox(height: 5.h),
+                Wrap(
+                  spacing: 8.w,
+                  runSpacing: 8.h,
+                  children: [
+                    _AccountMiniBadge(
+                      icon: PhosphorIcons.student_fill,
+                      label: studentLabel,
+                    ),
+                    _AccountMiniBadge(
+                      icon: PhosphorIcons.users_three_fill,
+                      label:
+                          '$linkedStudentsCount ${linkedStudentsCount == 1 ? 'filho vinculado' : 'filhos vinculados'}',
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-          SizedBox(height: 8.h),
+        ],
+      ),
+    );
+  }
+}
+
+class _AccountMiniBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _AccountMiniBadge({
+    required this.icon,
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 7.h),
+      decoration: BoxDecoration(
+        color: _guardianSoftSurface(context),
+        borderRadius: BorderRadius.circular(999.r),
+        border: Border.all(color: _guardianBorder(context)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            size: 12.sp,
+            color: const Color(0xFF00A859),
+          ),
+          SizedBox(width: 6.w),
           Text(
-            details.isEmpty ? 'Vínculo acadêmico ativo' : details.join(' · '),
+            label,
             style: GoogleFonts.inter(
-              fontSize: 13.sp,
+              fontSize: 10.5.sp,
               fontWeight: FontWeight.w600,
-              color: const Color(0xFF6B7280),
-              height: 1.45,
+              color: _guardianTextPrimary(context),
             ),
           ),
         ],
@@ -1465,16 +1790,20 @@ class _GuardianStudentOptionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final classLabel = student.classInfo?.name ?? student.relationship;
+    const accent = Color(0xFF00A859);
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(20.r),
       child: Container(
         padding: EdgeInsets.all(16.r),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFE8F7EF) : const Color(0xFFF8FAFC),
+          color: selected
+              ? accent.withValues(alpha: 0.12)
+              : _guardianSoftSurface(context),
           borderRadius: BorderRadius.circular(20.r),
           border: Border.all(
-            color: selected ? const Color(0xFF00A859) : const Color(0xFFE5E7EB),
+            color: selected ? accent : _guardianBorder(context),
           ),
         ),
         child: Row(
@@ -1483,13 +1812,17 @@ class _GuardianStudentOptionTile extends StatelessWidget {
               width: 42.w,
               height: 42.w,
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14.r),
+                color: _guardianSurface(context),
+                shape: BoxShape.circle,
               ),
-              child: Icon(
-                PhosphorIcons.student_fill,
-                size: 18.sp,
-                color: const Color(0xFF00A859),
+              alignment: Alignment.center,
+              child: Text(
+                _guardianInitials(student.fullName),
+                style: GoogleFonts.inter(
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w800,
+                  color: accent,
+                ),
               ),
             ),
             SizedBox(width: 12.w),
@@ -1503,8 +1836,8 @@ class _GuardianStudentOptionTile extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.inter(
                       fontSize: 14.sp,
-                      fontWeight: FontWeight.w800,
-                      color: const Color(0xFF111827),
+                      fontWeight: FontWeight.w700,
+                      color: _guardianTextPrimary(context),
                     ),
                   ),
                   SizedBox(height: 4.h),
@@ -1512,8 +1845,8 @@ class _GuardianStudentOptionTile extends StatelessWidget {
                     classLabel,
                     style: GoogleFonts.inter(
                       fontSize: 12.sp,
-                      fontWeight: FontWeight.w600,
-                      color: const Color(0xFF6B7280),
+                      fontWeight: FontWeight.w500,
+                      color: _guardianTextSecondary(context),
                     ),
                   ),
                 ],
@@ -1522,9 +1855,361 @@ class _GuardianStudentOptionTile extends StatelessWidget {
             if (selected)
               Icon(
                 PhosphorIcons.check_circle_fill,
-                color: const Color(0xFF00A859),
+                color: accent,
                 size: 20.sp,
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingsSectionCard extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+  final Widget child;
+
+  const _SettingsSectionCard({
+    required this.title,
+    required this.child,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.all(16.r),
+      decoration: BoxDecoration(
+        color: _guardianSurface(context),
+        borderRadius: BorderRadius.circular(22.r),
+        border: Border.all(color: _guardianBorder(context)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.inter(
+              fontSize: 15.sp,
+              fontWeight: FontWeight.w700,
+              color: _guardianTextPrimary(context),
+            ),
+          ),
+          if ((subtitle ?? '').trim().isNotEmpty) ...[
+            SizedBox(height: 5.h),
+            Text(
+              subtitle!,
+              style: GoogleFonts.inter(
+                fontSize: 11.5.sp,
+                fontWeight: FontWeight.w500,
+                color: _guardianTextSecondary(context),
+                height: 1.35,
+              ),
+            ),
+          ],
+          SizedBox(height: 12.h),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsInfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? helper;
+
+  const _SettingsInfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.helper,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: 10.h),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34.w,
+            height: 34.w,
+            decoration: BoxDecoration(
+              color: _guardianSoftSurface(context),
+              borderRadius: BorderRadius.circular(12.r),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              icon,
+              size: 18.sp,
+              color: const Color(0xFF00A859),
+            ),
+          ),
+          SizedBox(width: 12.w),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.inter(
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.w600,
+                    color: _guardianTextSecondary(context),
+                  ),
+                ),
+                SizedBox(height: 4.h),
+                Text(
+                  value,
+                  style: GoogleFonts.inter(
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.w700,
+                    color: _guardianTextPrimary(context),
+                    height: 1.3,
+                  ),
+                ),
+                if ((helper ?? '').trim().isNotEmpty) ...[
+                  SizedBox(height: 3.h),
+                  Text(
+                    helper!,
+                    style: GoogleFonts.inter(
+                      fontSize: 11.sp,
+                      fontWeight: FontWeight.w500,
+                      color: _guardianTextSecondary(context),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsActionRow extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final String? badgeLabel;
+  final VoidCallback? onTap;
+
+  const _SettingsActionRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.badgeLabel,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16.r),
+      child: Container(
+        padding: EdgeInsets.all(12.r),
+        decoration: BoxDecoration(
+          color: _guardianSoftSurface(context),
+          borderRadius: BorderRadius.circular(16.r),
+          border: Border.all(color: _guardianBorder(context)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 34.w,
+              height: 34.w,
+              decoration: BoxDecoration(
+                color: _guardianSurface(context),
+                borderRadius: BorderRadius.circular(12.r),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                icon,
+                size: 16.sp,
+                color: const Color(0xFF00A859),
+              ),
+            ),
+            SizedBox(width: 10.w),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: GoogleFonts.inter(
+                            fontSize: 13.sp,
+                            fontWeight: FontWeight.w700,
+                            color: _guardianTextPrimary(context),
+                          ),
+                        ),
+                      ),
+                      if ((badgeLabel ?? '').trim().isNotEmpty)
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10.w,
+                            vertical: 5.h,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                const Color(0xFF00A859).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999.r),
+                          ),
+                          child: Text(
+                            badgeLabel!,
+                            style: GoogleFonts.inter(
+                              fontSize: 10.sp,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF00A859),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  SizedBox(height: 4.h),
+                  Text(
+                    subtitle,
+                    style: GoogleFonts.inter(
+                      fontSize: 11.5.sp,
+                      fontWeight: FontWeight.w500,
+                      color: _guardianTextSecondary(context),
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (onTap != null) ...[
+              SizedBox(width: 10.w),
+              Icon(
+                PhosphorIcons.caret_right_bold,
+                size: 15.sp,
+                color: _guardianTextSecondary(context),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThemeModeSelector extends StatelessWidget {
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeModeSelected;
+
+  const _ThemeModeSelector({
+    required this.themeMode,
+    required this.onThemeModeSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _ThemeModeChoiceChip(
+                label: 'Sistema',
+                icon: PhosphorIcons.gear_fill,
+                selected: themeMode == ThemeMode.system,
+                onTap: () => onThemeModeSelected(ThemeMode.system),
+              ),
+            ),
+            SizedBox(width: 10.w),
+            Expanded(
+              child: _ThemeModeChoiceChip(
+                label: 'Claro',
+                icon: PhosphorIcons.sun_fill,
+                selected: themeMode == ThemeMode.light,
+                onTap: () => onThemeModeSelected(ThemeMode.light),
+              ),
+            ),
+            SizedBox(width: 10.w),
+            Expanded(
+              child: _ThemeModeChoiceChip(
+                label: 'Escuro',
+                icon: PhosphorIcons.moon_fill,
+                selected: themeMode == ThemeMode.dark,
+                onTap: () => onThemeModeSelected(ThemeMode.dark),
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: 10.h),
+        Text(
+          'A preferência fica salva neste dispositivo e reaproveita o mesmo sistema de tema do aplicativo.',
+          style: GoogleFonts.inter(
+            fontSize: 11.sp,
+            fontWeight: FontWeight.w500,
+            color: _guardianTextSecondary(context),
+            height: 1.45,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ThemeModeChoiceChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ThemeModeChoiceChip({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = Color(0xFF7A5AF8);
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(18.r),
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 14.h),
+        decoration: BoxDecoration(
+          color: selected
+              ? accent.withValues(alpha: 0.14)
+              : _guardianSoftSurface(context),
+          borderRadius: BorderRadius.circular(18.r),
+          border: Border.all(
+            color: selected ? accent : _guardianBorder(context),
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              size: 18.sp,
+              color: selected ? accent : _guardianTextSecondary(context),
+            ),
+            SizedBox(height: 8.h),
+            Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 12.sp,
+                fontWeight: FontWeight.w700,
+                color: selected ? accent : _guardianTextPrimary(context),
+              ),
+            ),
           ],
         ),
       ),
@@ -1559,10 +2244,13 @@ class _GuardianLessonSummaryCard extends StatelessWidget {
     }
 
     return Container(
-      padding: EdgeInsets.all(22.r),
+      padding: EdgeInsets.all(18.r),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [accent.withValues(alpha: 0.12), Colors.white],
+          colors: [
+            accent.withValues(alpha: _isDarkContext(context) ? 0.18 : 0.12),
+            _guardianSurface(context),
+          ],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -1576,26 +2264,25 @@ class _GuardianLessonSummaryCard extends StatelessWidget {
             label: isCurrent ? 'Acontecendo agora' : 'Próxima aula',
             color: accent,
           ),
-          SizedBox(height: 14.h),
+          SizedBox(height: 12.h),
           Text(
             spotlight.subjectName,
-            style: TextStyle(
-              color: const Color(0xFF1B1F24),
-              fontSize: 28.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+            style: GoogleFonts.inter(
+              color: _guardianTextPrimary(context),
+              fontSize: 20.sp,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          SizedBox(height: 8.h),
+          SizedBox(height: 6.h),
           Text(
             spotlight.timeLabel,
             style: GoogleFonts.inter(
-              fontSize: 15.sp,
+              fontSize: 14.sp,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF111827),
+              color: _guardianTextPrimary(context),
             ),
           ),
-          SizedBox(height: 8.h),
+          SizedBox(height: 6.h),
           Text(
             [
               spotlight.teacherName,
@@ -1604,14 +2291,14 @@ class _GuardianLessonSummaryCard extends StatelessWidget {
                 spotlight.weekdayLabel,
             ].join(' · '),
             style: GoogleFonts.inter(
-              fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF4B5563),
-              height: 1.45,
+              fontSize: 12.sp,
+              fontWeight: FontWeight.w500,
+              color: _guardianTextSecondary(context),
+              height: 1.35,
             ),
           ),
           if ((schedule?.todayCount ?? 0) > 0) ...[
-            SizedBox(height: 12.h),
+            SizedBox(height: 10.h),
             Text(
               '${schedule!.todayCount} aula(s) programada(s) para hoje',
               style: GoogleFonts.inter(
@@ -1621,7 +2308,7 @@ class _GuardianLessonSummaryCard extends StatelessWidget {
               ),
             ),
           ],
-          SizedBox(height: 18.h),
+          SizedBox(height: 14.h),
           ElevatedButton.icon(
             onPressed: onOpenSchedule,
             icon: Icon(PhosphorIcons.calendar_blank, size: 16.sp),
@@ -1663,9 +2350,9 @@ class _GuardianHomeSummaryCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(24.r),
       child: Container(
-        padding: EdgeInsets.all(18.r),
+        padding: EdgeInsets.all(16.r),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _guardianSurface(context),
           borderRadius: BorderRadius.circular(24.r),
           border: Border.all(color: accentColor.withValues(alpha: 0.18)),
         ),
@@ -1673,46 +2360,45 @@ class _GuardianHomeSummaryCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              width: 40.w,
-              height: 40.w,
+              width: 36.w,
+              height: 36.w,
               decoration: BoxDecoration(
                 color: accentColor.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(14.r),
               ),
               child: Icon(icon, color: accentColor, size: 18.sp),
             ),
-            SizedBox(height: 14.h),
+            SizedBox(height: 10.h),
             Text(
               title,
               style: GoogleFonts.inter(
-                fontSize: 13.sp,
+                fontSize: 12.5.sp,
+                fontWeight: FontWeight.w700,
+                color: _guardianTextPrimary(context),
+              ),
+            ),
+            SizedBox(height: 4.h),
+            Text(
+              headline,
+              style: GoogleFonts.inter(
+                color: _guardianTextPrimary(context),
+                fontSize: 20.sp,
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFF111827),
               ),
             ),
             SizedBox(height: 6.h),
-            Text(
-              headline,
-              style: TextStyle(
-                color: const Color(0xFF1B1F24),
-                fontSize: 24.sp,
-                fontFamily: 'GR Milesons Three',
-                fontWeight: FontWeight.w400,
-              ),
-            ),
-            SizedBox(height: 8.h),
             Text(
               subtitle,
               maxLines: 4,
               overflow: TextOverflow.ellipsis,
               style: GoogleFonts.inter(
-                fontSize: 12.sp,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF6B7280),
-                height: 1.45,
+                fontSize: 11.5.sp,
+                fontWeight: FontWeight.w500,
+                color: _guardianTextSecondary(context),
+                height: 1.35,
               ),
             ),
-            SizedBox(height: 12.h),
+            SizedBox(height: 10.h),
             Text(
               actionLabel,
               style: GoogleFonts.inter(
@@ -1751,9 +2437,9 @@ class _GuardianHubCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(24.r),
       child: Container(
-        padding: EdgeInsets.all(20.r),
+        padding: EdgeInsets.all(16.r),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _guardianSurface(context),
           borderRadius: BorderRadius.circular(24.r),
           border: Border.all(color: accent.withValues(alpha: 0.18)),
         ),
@@ -1763,23 +2449,22 @@ class _GuardianHubCard extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  width: 44.w,
-                  height: 44.w,
+                  width: 40.w,
+                  height: 40.w,
                   decoration: BoxDecoration(
                     color: accent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(14.r),
                   ),
-                  child: Icon(icon, color: accent, size: 20.sp),
+                  child: Icon(icon, color: accent, size: 18.sp),
                 ),
-                SizedBox(width: 12.w),
+                SizedBox(width: 10.w),
                 Expanded(
                   child: Text(
                     title,
-                    style: TextStyle(
-                      color: const Color(0xFF1B1F24),
-                      fontSize: 24.sp,
-                      fontFamily: 'GR Milesons Three',
-                      fontWeight: FontWeight.w400,
+                    style: GoogleFonts.inter(
+                      color: _guardianTextPrimary(context),
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ),
@@ -1790,24 +2475,24 @@ class _GuardianHubCard extends StatelessWidget {
                 ),
               ],
             ),
-            SizedBox(height: 14.h),
+            SizedBox(height: 10.h),
             Text(
               description,
               style: GoogleFonts.inter(
-                fontSize: 14.sp,
+                fontSize: 13.sp,
                 fontWeight: FontWeight.w700,
-                color: const Color(0xFF111827),
-                height: 1.45,
+                color: _guardianTextPrimary(context),
+                height: 1.35,
               ),
             ),
-            SizedBox(height: 8.h),
+            SizedBox(height: 6.h),
             Text(
               footnote,
               style: GoogleFonts.inter(
-                fontSize: 12.sp,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF6B7280),
-                height: 1.45,
+                fontSize: 11.5.sp,
+                fontWeight: FontWeight.w500,
+                color: _guardianTextSecondary(context),
+                height: 1.35,
               ),
             ),
           ],
@@ -1829,9 +2514,9 @@ class _GuardianLoadingCard extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(18.r),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _guardianSurface(context),
         borderRadius: BorderRadius.circular(24.r),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: _guardianBorder(context)),
       ),
       child: Row(
         children: [
@@ -1839,14 +2524,14 @@ class _GuardianLoadingCard extends StatelessWidget {
             color: Color(0xFF00A859),
             strokeWidth: 2.4,
           ),
-          SizedBox(width: 14.w),
+          SizedBox(width: 12.w),
           Expanded(
             child: Text(
               label,
               style: GoogleFonts.inter(
-                fontSize: 13.sp,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF4B5563),
+                fontSize: 12.5.sp,
+                fontWeight: FontWeight.w500,
+                color: _guardianTextSecondary(context),
               ),
             ),
           ),
@@ -1877,9 +2562,9 @@ class _PortalShortcutCard extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(22.r),
       child: Container(
-        padding: EdgeInsets.all(18.r),
+        padding: EdgeInsets.all(16.r),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _guardianSurface(context),
           borderRadius: BorderRadius.circular(22.r),
           border: Border.all(color: color.withValues(alpha: 0.18)),
         ),
@@ -1887,34 +2572,34 @@ class _PortalShortcutCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              width: 42.w,
-              height: 42.w,
+              width: 38.w,
+              height: 38.w,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(14.r),
               ),
               child: Icon(icon, color: color, size: 20.sp),
             ),
-            SizedBox(height: 14.h),
+            SizedBox(height: 10.h),
             Text(
               title,
               style: GoogleFonts.inter(
-                fontSize: 15.sp,
-                fontWeight: FontWeight.w800,
-                color: const Color(0xFF111827),
+                fontSize: 14.sp,
+                fontWeight: FontWeight.w700,
+                color: _guardianTextPrimary(context),
               ),
             ),
             SizedBox(height: 4.h),
             Text(
               subtitle,
               style: GoogleFonts.inter(
-                fontSize: 12.sp,
-                fontWeight: FontWeight.w600,
-                color: const Color(0xFF6B7280),
-                height: 1.45,
+                fontSize: 11.5.sp,
+                fontWeight: FontWeight.w500,
+                color: _guardianTextSecondary(context),
+                height: 1.35,
               ),
             ),
-            SizedBox(height: 10.h),
+            SizedBox(height: 8.h),
             Text(
               'Abrir módulo',
               style: GoogleFonts.inter(
@@ -1951,7 +2636,7 @@ class _PortalFinanceSpotlight extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(20.r),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _guardianSurface(context),
         borderRadius: BorderRadius.circular(24.r),
         border: Border.all(color: accent.withValues(alpha: 0.2)),
       ),
@@ -1967,24 +2652,23 @@ class _PortalFinanceSpotlight extends StatelessWidget {
               letterSpacing: 0.3,
             ),
           ),
-          SizedBox(height: 8.h),
+          SizedBox(height: 6.h),
           Text(
             invoice.description,
-            style: TextStyle(
-              color: const Color(0xFF1B1F24),
-              fontSize: 24.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+            style: GoogleFonts.inter(
+              color: _guardianTextPrimary(context),
+              fontSize: 18.sp,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          SizedBox(height: 8.h),
+          SizedBox(height: 6.h),
           Text(
             '${_buildStatusLabel(state)} · ${_buildDueText(invoice)}',
             style: GoogleFonts.inter(
-              fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF6B7280),
-              height: 1.4,
+              fontSize: 12.sp,
+              fontWeight: FontWeight.w500,
+              color: _guardianTextSecondary(context),
+              height: 1.3,
             ),
           ),
           SizedBox(height: 6.h),
@@ -1993,10 +2677,10 @@ class _PortalFinanceSpotlight extends StatelessWidget {
             style: GoogleFonts.inter(
               fontSize: 18.sp,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF111827),
+              color: _guardianTextPrimary(context),
             ),
           ),
-          SizedBox(height: 16.h),
+          SizedBox(height: 12.h),
           Row(
             children: [
               Expanded(
@@ -2014,7 +2698,7 @@ class _PortalFinanceSpotlight extends StatelessWidget {
               ),
             ],
           ),
-          SizedBox(height: 10.h),
+          SizedBox(height: 8.h),
           Row(
             children: [
               Expanded(
@@ -2064,7 +2748,7 @@ class _InvoiceListTileCard extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(16.r),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _guardianSurface(context),
         borderRadius: BorderRadius.circular(22.r),
         border: Border.all(color: accent.withValues(alpha: 0.15)),
       ),
@@ -2081,7 +2765,7 @@ class _InvoiceListTileCard extends StatelessWidget {
                     Text(
                       _buildReferenceLabel(invoice),
                       style: GoogleFonts.inter(
-                        fontSize: 11.sp,
+                        fontSize: 10.5.sp,
                         fontWeight: FontWeight.w800,
                         color: accent,
                       ),
@@ -2091,8 +2775,8 @@ class _InvoiceListTileCard extends StatelessWidget {
                       invoice.description,
                       style: GoogleFonts.inter(
                         fontSize: 15.sp,
-                        fontWeight: FontWeight.w800,
-                        color: const Color(0xFF111827),
+                        fontWeight: FontWeight.w700,
+                        color: _guardianTextPrimary(context),
                       ),
                     ),
                   ],
@@ -2104,11 +2788,10 @@ class _InvoiceListTileCard extends StatelessWidget {
           SizedBox(height: 10.h),
           Text(
             _formatCurrency(invoice.value),
-            style: TextStyle(
-              color: const Color(0xFF1B1F24),
-              fontSize: 24.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+            style: GoogleFonts.inter(
+              color: _guardianTextPrimary(context),
+              fontSize: 20.sp,
+              fontWeight: FontWeight.w800,
             ),
           ),
           SizedBox(height: 6.h),
@@ -2116,8 +2799,8 @@ class _InvoiceListTileCard extends StatelessWidget {
             _buildDueText(invoice),
             style: GoogleFonts.inter(
               fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF6B7280),
+              fontWeight: FontWeight.w500,
+              color: _guardianTextSecondary(context),
             ),
           ),
           SizedBox(height: 14.h),
@@ -2168,9 +2851,9 @@ class _MetricCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 16.h),
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 14.h),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _guardianSurface(context),
         borderRadius: BorderRadius.circular(22.r),
         border: Border.all(color: color.withValues(alpha: 0.16)),
       ),
@@ -2178,11 +2861,10 @@ class _MetricCard extends StatelessWidget {
         children: [
           Text(
             '$count',
-            style: TextStyle(
+            style: GoogleFonts.inter(
               color: color,
-              fontSize: 26.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+              fontSize: 22.sp,
+              fontWeight: FontWeight.w800,
             ),
           ),
           SizedBox(height: 4.h),
@@ -2190,9 +2872,9 @@ class _MetricCard extends StatelessWidget {
             label,
             textAlign: TextAlign.center,
             style: GoogleFonts.inter(
-              fontSize: 12.sp,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF6B7280),
+              fontSize: 11.5.sp,
+              fontWeight: FontWeight.w600,
+              color: _guardianTextSecondary(context),
             ),
           ),
         ],
@@ -2245,9 +2927,9 @@ class _InfoCard extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.all(18.r),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _guardianSurface(context),
         borderRadius: BorderRadius.circular(20.r),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: _guardianBorder(context)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2256,8 +2938,8 @@ class _InfoCard extends StatelessWidget {
             label,
             style: GoogleFonts.inter(
               fontSize: 12.sp,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFF6B7280),
+              fontWeight: FontWeight.w600,
+              color: _guardianTextSecondary(context),
             ),
           ),
           SizedBox(height: 6.h),
@@ -2266,7 +2948,7 @@ class _InfoCard extends StatelessWidget {
             style: GoogleFonts.inter(
               fontSize: 14.sp,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFF111827),
+              color: _guardianTextPrimary(context),
               height: 1.45,
             ),
           ),
@@ -2290,20 +2972,19 @@ class _EmptyStateCard extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(20.r),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _guardianSurface(context),
         borderRadius: BorderRadius.circular(24.r),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(color: _guardianBorder(context)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: TextStyle(
-              color: const Color(0xFF1B1F24),
-              fontSize: 24.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+            style: GoogleFonts.inter(
+              color: _guardianTextPrimary(context),
+              fontSize: 18.sp,
+              fontWeight: FontWeight.w700,
             ),
           ),
           SizedBox(height: 10.h),
@@ -2311,8 +2992,8 @@ class _EmptyStateCard extends StatelessWidget {
             message,
             style: GoogleFonts.inter(
               fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF6B7280),
+              fontWeight: FontWeight.w500,
+              color: _guardianTextSecondary(context),
               height: 1.45,
             ),
           ),
@@ -2336,7 +3017,7 @@ class _ErrorCard extends StatelessWidget {
     return Container(
       padding: EdgeInsets.all(20.r),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _guardianSurface(context),
         borderRadius: BorderRadius.circular(24.r),
         border: Border.all(color: const Color(0xFFFECACA)),
       ),
@@ -2345,11 +3026,10 @@ class _ErrorCard extends StatelessWidget {
         children: [
           Text(
             'Não foi possível carregar tudo agora',
-            style: TextStyle(
+            style: GoogleFonts.inter(
               color: const Color(0xFF991B1B),
-              fontSize: 22.sp,
-              fontFamily: 'GR Milesons Three',
-              fontWeight: FontWeight.w400,
+              fontSize: 18.sp,
+              fontWeight: FontWeight.w700,
             ),
           ),
           SizedBox(height: 10.h),
@@ -2357,7 +3037,7 @@ class _ErrorCard extends StatelessWidget {
             message,
             style: GoogleFonts.inter(
               fontSize: 13.sp,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w500,
               color: const Color(0xFF7F1D1D),
               height: 1.45,
             ),

@@ -47,6 +47,7 @@ class AuthProvider with ChangeNotifier {
   User? get user => _user;
   String? get token => _token;
   GuardianSession? get guardianSession => _guardianSession;
+  String? get guardianSelectedStudentId => _guardianSession?.selectedStudentId;
   bool get isAuthenticated => _token != null;
   bool get isGuardian =>
       _sessionPrincipal == 'guardian' && _guardianSession != null;
@@ -78,6 +79,44 @@ class AuthProvider with ChangeNotifier {
     await prefs.remove(_studentDataKey);
     await prefs.remove(_userRoleKey);
     await prefs.setString(_sessionPrincipalKey, 'guardian');
+  }
+
+  String? _pickGuardianSelectedStudentId(
+    GuardianSession session, {
+    String? preferredStudentId,
+  }) {
+    final normalizedPreferred = (preferredStudentId ?? '').trim();
+    if (session.hasLinkedStudent(normalizedPreferred)) {
+      return normalizedPreferred;
+    }
+
+    final defaultStudentId = session.defaultStudent?.id;
+    if (session.hasLinkedStudent(defaultStudentId)) {
+      return defaultStudentId;
+    }
+
+    if (session.linkedStudents.isNotEmpty) {
+      return session.linkedStudents.first.id;
+    }
+
+    return null;
+  }
+
+  Future<void> setGuardianSelectedStudentId(String? studentId) async {
+    if (_guardianSession == null) return;
+
+    final resolvedStudentId = _pickGuardianSelectedStudentId(
+      _guardianSession!,
+      preferredStudentId: studentId,
+    );
+
+    _guardianSession = _guardianSession!.copyWith(
+      selectedStudentId: resolvedStudentId,
+      clearSelectedStudentId: resolvedStudentId == null,
+    );
+
+    await _persistGuardianSession();
+    notifyListeners();
   }
 
   // =================================================================
@@ -440,12 +479,25 @@ class AuthProvider with ChangeNotifier {
     );
   }
 
+  Future<GuardianPinSetupResult> linkGuardianStudentWithExistingPin({
+    required String challengeId,
+    required String verificationToken,
+    required String pin,
+  }) {
+    return _guardianAuthService.linkGuardianStudentWithExistingPin(
+      challengeId: challengeId,
+      verificationToken: verificationToken,
+      pin: pin,
+    );
+  }
+
   Future<GuardianLoginResult> loginGuardian({
     String? schoolPublicId,
     required String cpf,
     required String pin,
   }) async {
     try {
+      final previousSelectedStudentId = _guardianSession?.selectedStudentId;
       final result = await _guardianAuthService.loginGuardian(
         schoolPublicId: schoolPublicId,
         cpf: cpf,
@@ -457,8 +509,14 @@ class AuthProvider with ChangeNotifier {
       }
 
       _user = null;
-      _guardianSession = result.session;
-      _token = result.session!.token;
+      final resolvedSession = result.session!.copyWith(
+        selectedStudentId: _pickGuardianSelectedStudentId(
+          result.session!,
+          preferredStudentId: previousSelectedStudentId,
+        ),
+      );
+      _guardianSession = resolvedSession;
+      _token = resolvedSession.token;
       _sessionPrincipal = 'guardian';
 
       await _persistGuardianSession();
