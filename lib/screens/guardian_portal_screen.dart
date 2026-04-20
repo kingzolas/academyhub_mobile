@@ -1,13 +1,21 @@
+import 'dart:async';
+
 import 'package:academyhub_mobile/model/guardian_auth_model.dart';
+import 'package:academyhub_mobile/model/app_notification_model.dart';
 import 'package:academyhub_mobile/model/invoice_model.dart';
+import 'package:academyhub_mobile/providers/app_notification_provider.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
+import 'package:academyhub_mobile/providers/guardian_official_documents_provider.dart';
 import 'package:academyhub_mobile/providers/invoice_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
 import 'package:academyhub_mobile/providers/theme_provider.dart';
 import 'package:academyhub_mobile/screens/guardian_activities_screen.dart';
 import 'package:academyhub_mobile/screens/guardian_attendance_screen.dart';
+import 'package:academyhub_mobile/screens/guardian_documents_screen.dart';
 import 'package:academyhub_mobile/screens/guardian_schedule_screen.dart';
 import 'package:academyhub_mobile/services/guardian_auth_service.dart';
+import 'package:academyhub_mobile/services/websocket.dart';
+import 'package:academyhub_mobile/widgets/app_notification_center_sheet.dart';
 import 'package:academyhub_mobile/widgets/custom_bottom_menu.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,12 +35,17 @@ class GuardianPortalScreen extends StatefulWidget {
 
 class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   final GuardianAuthService _guardianAuthService = GuardianAuthService();
+  final WebSocketService _webSocketService = WebSocketService();
+  StreamSubscription<Map<String, dynamic>>? _socketSubscription;
 
   int _currentIndex = 0;
   GuardianPortalHomeData? _portalHome;
   bool _isPortalLoading = false;
   String? _portalError;
   String? _selectedStudentId;
+  String? _focusedDocumentRequestId;
+  String? _focusedDocumentId;
+  int _documentsFocusNonce = 0;
 
   String get _currentSectionLabel {
     switch (_currentIndex) {
@@ -42,6 +55,8 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
         return 'Financeiro';
       case 3:
         return 'Conta';
+      case 4:
+        return 'Documentações';
       case 0:
       default:
         return 'Início';
@@ -67,8 +82,89 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     super.initState();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _listenToSocketEvents();
       _refreshGuardianPortal();
     });
+  }
+
+  @override
+  void dispose() {
+    _socketSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _listenToSocketEvents() {
+    _socketSubscription?.cancel();
+    _socketSubscription = _webSocketService.stream.listen((message) {
+      if (!mounted) return;
+
+      context.read<AppNotificationProvider>().handleRealtimeEvent(
+            message,
+            currentStudentId: _selectedStudent?.id,
+          );
+
+      final handled =
+          context.read<GuardianOfficialDocumentsProvider>().handleRealtimeEvent(
+                message,
+                studentId: _selectedStudent?.id,
+              );
+
+      if (!handled || _currentIndex != 4) return;
+
+      final feedback = _documentRealtimeFeedback(message['type']?.toString());
+      if (feedback != null) {
+        _showFeedback(feedback);
+      }
+    });
+  }
+
+  void _openNotificationCenter() {
+    showAppNotificationCenterSheet(
+      context: context,
+      onNotificationTap: _handleNotificationTap,
+    );
+  }
+
+  void _handleNotificationTap(AppNotificationItem notification) {
+    context.read<AppNotificationProvider>().markAsRead(notification.id);
+    Navigator.of(context).maybePop();
+
+    if (notification.routeKey == 'guardian.documents' ||
+        notification.domain == AppNotificationDomain.documents) {
+      setState(() {
+        _currentIndex = 4;
+        _focusedDocumentRequestId =
+            notification.metadata['requestId']?.toString();
+        _focusedDocumentId = notification.metadata['documentId']?.toString();
+        _documentsFocusNonce++;
+      });
+    }
+  }
+
+  void _connectGuardianWebSocket() {
+    final schoolId =
+        context.read<AuthProvider>().guardianSession?.schoolId.trim() ?? '';
+    if (schoolId.isEmpty) return;
+    _webSocketService.connect(schoolId);
+  }
+
+  String? _documentRealtimeFeedback(String? type) {
+    switch (type) {
+      case 'official_document_request_approved':
+        return 'A escola aprovou uma solicitação de documento.';
+      case 'official_document_request_rejected':
+        return 'A escola respondeu uma solicitação de documento.';
+      case 'official_document_awaiting_signature':
+        return 'Um documento está aguardando assinatura.';
+      case 'official_document_signed':
+        return 'Um documento foi assinado pela escola.';
+      case 'official_document_published':
+        return 'Documento oficial disponível para abrir ou baixar.';
+      case 'official_document_downloaded':
+        return 'Download registrado no protocolo.';
+      default:
+        return null;
+    }
   }
 
   Future<void> _refreshGuardianPortal() async {
@@ -80,6 +176,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
 
     await _loadGuardianPortalData(studentId: preferredStudentId);
     await _loadGuardianInvoices(studentId: _selectedStudentId);
+    await _loadGuardianDocuments(studentId: _selectedStudentId);
   }
 
   Future<void> _loadGuardianPortalData({String? studentId}) async {
@@ -128,6 +225,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       });
 
       await auth.setGuardianSelectedStudentId(resolvedStudentId);
+      _connectGuardianWebSocket();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -151,6 +249,29 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     await invoices.fetchGuardianInvoices(
       token: auth.token!,
       studentId: studentId,
+    );
+  }
+
+  Future<void> _loadGuardianDocuments({String? studentId}) async {
+    final auth = context.read<AuthProvider>();
+    final documents = context.read<GuardianOfficialDocumentsProvider>();
+    final normalizedStudentId =
+        (studentId ?? _selectedStudent?.id ?? '').trim();
+
+    if (auth.token == null || auth.token!.isEmpty) {
+      documents.clear();
+      return;
+    }
+
+    if (normalizedStudentId.isEmpty) {
+      documents.clear();
+      return;
+    }
+
+    await documents.load(
+      token: auth.token!,
+      studentId: normalizedStudentId,
+      silent: true,
     );
   }
 
@@ -318,6 +439,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                             .setGuardianSelectedStudentId(student.id);
                         await _loadGuardianPortalData(studentId: student.id);
                         await _loadGuardianInvoices(studentId: student.id);
+                        await _loadGuardianDocuments(studentId: student.id);
                       },
                     ),
                   ),
@@ -514,31 +636,47 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
           bottom: false,
           child: Padding(
             padding: EdgeInsets.fromLTRB(20.w, 3.h, 20.w, 4.h),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Text(
-                  'Responsável',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.inter(
-                    fontSize: 10.sp,
-                    fontWeight: FontWeight.w700,
-                    color: _guardianTextSecondary(context),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        'Responsável',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 10.sp,
+                          fontWeight: FontWeight.w700,
+                          color: _guardianTextSecondary(context),
+                        ),
+                      ),
+                      SizedBox(height: 1.h),
+                      Text(
+                        _currentSectionLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _guardianTextPrimary(context),
+                          fontSize: 16.5.sp,
+                          fontFamily: 'GR Milesons Three',
+                          fontWeight: FontWeight.w400,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                SizedBox(height: 1.h),
-                Text(
-                  _currentSectionLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: _guardianTextPrimary(context),
-                    fontSize: 16.5.sp,
-                    fontFamily: 'GR Milesons Three',
-                    fontWeight: FontWeight.w400,
-                  ),
+                SizedBox(width: 12.w),
+                Consumer<AppNotificationProvider>(
+                  builder: (context, provider, _) {
+                    return _NotificationBellButton(
+                      unreadCount: provider.unreadCount,
+                      onTap: _openNotificationCenter,
+                    );
+                  },
                 ),
               ],
             ),
@@ -676,6 +814,14 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               ),
             ],
           ),
+          SizedBox(height: 12.h),
+          _PortalShortcutCard(
+            title: 'Documentações',
+            subtitle: 'Solicitações, andamento e PDFs oficiais assinados',
+            icon: PhosphorIcons.files_fill,
+            color: const Color(0xFF2F80ED),
+            onTap: () => _onTabTapped(4),
+          ),
           SizedBox(height: 14.h),
           _buildSectionLabel('Financeiro em destaque'),
           SizedBox(height: 10.h),
@@ -797,6 +943,17 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               ),
               footnote: 'Acompanhe entregas, pendências e atividades recentes.',
               onTap: _openActivitiesScreen,
+            ),
+            SizedBox(height: 12.h),
+            _GuardianHubCard(
+              title: 'Documentações',
+              icon: PhosphorIcons.files_fill,
+              accent: const Color(0xFF2F80ED),
+              description:
+                  'Solicite declarações, acompanhe a análise da secretaria e acesse PDFs oficiais assinados.',
+              footnote:
+                  'Veja o andamento em etapas claras e baixe quando estiver publicado.',
+              onTap: () => _onTabTapped(4),
             ),
           ],
         ],
@@ -1439,6 +1596,12 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                 _buildTrackingTab(),
                 _buildFinanceTab(session, invoices),
                 _buildAccountTab(auth, session),
+                GuardianDocumentsScreen(
+                  selectedStudent: _selectedStudent,
+                  focusRequestId: _focusedDocumentRequestId,
+                  focusDocumentId: _focusedDocumentId,
+                  focusNonce: _documentsFocusNonce,
+                ),
               ],
             ),
           ),
@@ -1450,6 +1613,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               onNavigateToAttendance: () {},
               isGuardian: true,
               onGuardianRefresh: _refreshGuardianPortal,
+              onGuardianDocuments: () => _onTabTapped(4),
               onGuardianAccount: () => _onTabTapped(3),
               onGuardianStudentSwitcher: (session?.linkedStudentsCount ?? 0) > 1
                   ? _showStudentPicker
@@ -1474,6 +1638,85 @@ class _GuardianInvoiceGroups {
     required this.paid,
     required this.featured,
   });
+}
+
+class _NotificationBellButton extends StatelessWidget {
+  final int unreadCount;
+  final VoidCallback onTap;
+
+  const _NotificationBellButton({
+    required this.unreadCount,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasUnread = unreadCount > 0;
+
+    return Semantics(
+      button: true,
+      label: hasUnread
+          ? '$unreadCount notificações não lidas'
+          : 'Abrir notificações',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16.r),
+        child: Container(
+          width: 44.w,
+          height: 44.w,
+          decoration: BoxDecoration(
+            color: _guardianSoftSurface(context),
+            borderRadius: BorderRadius.circular(16.r),
+            border: Border.all(color: _guardianBorder(context)),
+          ),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Center(
+                child: Icon(
+                  hasUnread
+                      ? PhosphorIcons.bell_ringing_fill
+                      : PhosphorIcons.bell_fill,
+                  color: hasUnread
+                      ? const Color(0xFF00A859)
+                      : _guardianTextSecondary(context),
+                  size: 20.sp,
+                ),
+              ),
+              if (hasUnread)
+                Positioned(
+                  right: -3.w,
+                  top: -3.h,
+                  child: Container(
+                    constraints: BoxConstraints(minWidth: 18.w),
+                    height: 18.w,
+                    padding: EdgeInsets.symmetric(horizontal: 5.w),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEF4444),
+                      borderRadius: BorderRadius.circular(999.r),
+                      border: Border.all(
+                        color: _guardianAppBarBackground(context),
+                        width: 2,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(
+                        unreadCount > 9 ? '9+' : '$unreadCount',
+                        style: GoogleFonts.inter(
+                          color: Colors.white,
+                          fontSize: 9.sp,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 enum _InvoiceState { pending, overdue, paid, canceled }

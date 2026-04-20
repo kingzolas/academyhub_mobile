@@ -12,6 +12,8 @@ import 'package:academyhub_mobile/providers/dashboard_provider.dart';
 import 'package:academyhub_mobile/providers/enrollment_provider.dart';
 import 'package:academyhub_mobile/providers/expense_provider.dart';
 import 'package:academyhub_mobile/providers/financial_automation_provider.dart';
+import 'package:academyhub_mobile/providers/app_notification_provider.dart';
+import 'package:academyhub_mobile/providers/guardian_official_documents_provider.dart';
 import 'package:academyhub_mobile/providers/horario_provider.dart';
 import 'package:academyhub_mobile/providers/invoice_provider.dart';
 import 'package:academyhub_mobile/providers/report_card_provider.dart';
@@ -99,10 +101,14 @@ void main() async {
           ChangeNotifierProvider(create: (_) => ExpenseProvider()),
           ChangeNotifierProvider(create: (_) => AttendanceProvider()),
           ChangeNotifierProvider(create: (_) => AuthProvider()),
+          ChangeNotifierProvider(create: (_) => AppNotificationProvider()),
           ChangeNotifierProvider(create: (_) => StudentProvider()),
           ChangeNotifierProvider(create: (_) => UserProvider()),
           ChangeNotifierProvider(create: (_) => NegotiationProvider()),
           ChangeNotifierProvider(create: (_) => InvoiceProvider()),
+          ChangeNotifierProvider(
+            create: (_) => GuardianOfficialDocumentsProvider(),
+          ),
           ChangeNotifierProvider(create: (_) => SubjectProvider()),
           ChangeNotifierProvider(create: (_) => ClassProvider()),
           ChangeNotifierProvider(create: (_) => WhatsappProvider()),

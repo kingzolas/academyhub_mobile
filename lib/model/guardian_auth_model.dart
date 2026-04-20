@@ -1,9 +1,11 @@
 class GuardianSchoolOption {
   final String schoolPublicId;
+  final String schoolId;
   final String schoolName;
 
   const GuardianSchoolOption({
     required this.schoolPublicId,
+    this.schoolId = '',
     required this.schoolName,
   });
 
@@ -154,6 +156,7 @@ class GuardianSession {
   final String status;
   final int linkedStudentsCount;
   final String schoolPublicId;
+  final String schoolId;
   final String schoolName;
   final List<GuardianLinkedStudent> linkedStudents;
   final GuardianLinkedStudent? defaultStudent;
@@ -166,6 +169,7 @@ class GuardianSession {
     required this.status,
     required this.linkedStudentsCount,
     required this.schoolPublicId,
+    required this.schoolId,
     required this.schoolName,
     this.linkedStudents = const [],
     this.defaultStudent,
@@ -186,6 +190,7 @@ class GuardianSession {
     String? status,
     int? linkedStudentsCount,
     String? schoolPublicId,
+    String? schoolId,
     String? schoolName,
     List<GuardianLinkedStudent>? linkedStudents,
     GuardianLinkedStudent? defaultStudent,
@@ -199,6 +204,7 @@ class GuardianSession {
       status: status ?? this.status,
       linkedStudentsCount: linkedStudentsCount ?? this.linkedStudentsCount,
       schoolPublicId: schoolPublicId ?? this.schoolPublicId,
+      schoolId: schoolId ?? this.schoolId,
       schoolName: schoolName ?? this.schoolName,
       linkedStudents: linkedStudents ?? this.linkedStudents,
       defaultStudent: defaultStudent ?? this.defaultStudent,
@@ -231,6 +237,11 @@ class GuardianSession {
           int.tryParse('${guardianJson['linkedStudentsCount'] ?? 0}') ?? 0,
       schoolPublicId:
           (schoolJson['publicIdentifier'] ?? schoolPublicId ?? '').toString(),
+      schoolId: (schoolJson['_id'] ??
+              schoolJson['id'] ??
+              schoolJson['schoolId'] ??
+              '')
+          .toString(),
       schoolName: (schoolJson['name'] ?? '').toString(),
       linkedStudents: linkedStudents,
       defaultStudent: defaultStudentJson == null
@@ -257,6 +268,7 @@ class GuardianSession {
       linkedStudentsCount:
           int.tryParse('${json['linkedStudentsCount'] ?? 0}') ?? 0,
       schoolPublicId: (json['schoolPublicId'] ?? '').toString(),
+      schoolId: (json['schoolId'] ?? '').toString(),
       schoolName: (json['schoolName'] ?? '').toString(),
       linkedStudents: linkedStudents,
       defaultStudent: defaultStudentJson == null
@@ -274,6 +286,7 @@ class GuardianSession {
       'status': status,
       'linkedStudentsCount': linkedStudentsCount,
       'schoolPublicId': schoolPublicId,
+      'schoolId': schoolId,
       'schoolName': schoolName,
       'linkedStudents': linkedStudents
           .map(

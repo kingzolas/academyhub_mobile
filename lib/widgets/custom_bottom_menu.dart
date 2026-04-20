@@ -27,6 +27,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
 
   // Ações do Responsável
   final VoidCallback? onGuardianRefresh;
+  final VoidCallback? onGuardianDocuments;
   final VoidCallback? onGuardianAccount;
   final VoidCallback? onGuardianStudentSwitcher;
 
@@ -46,6 +47,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
     this.onStudentAction1,
     this.onStudentAction2,
     this.onGuardianRefresh,
+    this.onGuardianDocuments,
     this.onGuardianAccount,
     this.onGuardianStudentSwitcher,
     this.isProfessor = false,
@@ -105,7 +107,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
     if (widget.isGuardian) {
       return [
         _RadialMenuAction(
-          angle: 135,
+          angle: 150,
           distance: 140.h,
           icon: PhosphorIcons.arrow_clockwise_fill,
           label: 'Atualizar\ndados',
@@ -115,7 +117,17 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
           isBig: true,
         ),
         _RadialMenuAction(
-          angle: 45,
+          angle: 90,
+          distance: 155.h,
+          icon: PhosphorIcons.files_fill,
+          label: 'Documen-\ntações',
+          color: const Color(0xFF2F80ED),
+          iconColor: Colors.white,
+          onTap: widget.onGuardianDocuments ?? () {},
+          isBig: true,
+        ),
+        _RadialMenuAction(
+          angle: 30,
           distance: 140.h,
           icon: PhosphorIcons.user_circle_fill,
           label: 'Minha\nconta',

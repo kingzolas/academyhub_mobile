@@ -21,6 +21,8 @@ import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
 import 'package:academyhub_mobile/providers/attendance_provider.dart';
 import 'package:academyhub_mobile/providers/user_provider.dart';
 import 'package:academyhub_mobile/providers/report_card_provider.dart';
+import 'package:academyhub_mobile/providers/app_notification_provider.dart';
+import 'package:academyhub_mobile/providers/guardian_official_documents_provider.dart';
 
 // [NOVO] Imports para a navegação global forçada
 import '../services/navigation_service.dart';
@@ -134,6 +136,9 @@ class AuthProvider with ChangeNotifier {
       Provider.of<AttendanceProvider>(context, listen: false).clear();
       Provider.of<UserProvider>(context, listen: false).clear();
       Provider.of<ReportCardProvider>(context, listen: false).clear();
+      Provider.of<AppNotificationProvider>(context, listen: false).clear();
+      Provider.of<GuardianOfficialDocumentsProvider>(context, listen: false)
+          .clear();
 
       debugPrint('✅ [AuthProvider] Cache limpo com sucesso.');
     } catch (e) {
