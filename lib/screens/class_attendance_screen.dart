@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'package:academyhub_mobile/model/class_model.dart';
 import 'package:academyhub_mobile/model/attendance_model.dart';
 import 'package:academyhub_mobile/providers/attendance_provider.dart';
@@ -10,17 +10,17 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
-// --- PALETA DE CORES CORRIGIDA (Padrão Neutro Academy Hub) ---
-const kBackgroundDark = Color(0xFF121212); // Fundo Preto Padrão
+// --- PALETA DE CORES CORRIGIDA (PadrÃ£o Neutro Academy Hub) ---
+const kBackgroundDark = Color(0xFF121212); // Fundo Preto PadrÃ£o
 const kSurfaceDark = Color(0xFF1E1E1E); // Cinza Neutro (Sem tom roxo/azul)
 const kBackgroundLight = Color(0xFFF4F6F8);
 const kSurfaceLight = Colors.white;
 
-// Cores de Status e Ação
-const kSuccessColor = Color(0xFF00C853); // Verde Vibrante (Botões/Presença)
+// Cores de Status e AÃ§Ã£o
+const kSuccessColor = Color(0xFF00C853); // Verde Vibrante (BotÃµes/PresenÃ§a)
 const kErrorColor = Color(0xFFFF5252); // Vermelho (Falta)
 const kAccentOrange = Color(0xFFFF9100); // Laranja (Detalhes)
-const kTextGrey = Color(0xFF9E9E9E); // Cinza médio para textos secundários
+const kTextGrey = Color(0xFF9E9E9E); // Cinza mÃ©dio para textos secundÃ¡rios
 const kTextWhite = Color(0xFFEEEEEE); // Branco suave para textos principais
 
 const kBorderRadius = 16.0;
@@ -62,7 +62,7 @@ class _ClassAttendanceScreenState extends State<ClassAttendanceScreen> {
     super.dispose();
   }
 
-  // --- LÓGICA DE REAL-TIME ---
+  // --- LÃ“GICA DE REAL-TIME ---
   void _setupWebSocketListener() {
     _socketSub = _wsService.stream.listen((message) {
       if (message['type']?.toString().toUpperCase() == 'ATTENDANCE_UPDATED') {
@@ -127,7 +127,7 @@ class _ClassAttendanceScreenState extends State<ClassAttendanceScreen> {
       backgroundColor: bgColor,
       body: Row(
         children: [
-          // 1. SIDEBAR (Histórico)
+          // 1. SIDEBAR (HistÃ³rico)
           _SidebarHistory(
             classData: widget.classData,
             selectedDate: _selectedDate,
@@ -137,7 +137,7 @@ class _ClassAttendanceScreenState extends State<ClassAttendanceScreen> {
             onBack: widget.onBack,
           ),
 
-          // 2. CONTEÚDO PRINCIPAL
+          // 2. CONTEÃšDO PRINCIPAL
           Expanded(
             child: Column(
               children: [
@@ -161,13 +161,13 @@ class _ClassAttendanceScreenState extends State<ClassAttendanceScreen> {
           ),
         ],
       ),
-      // FAB Principal (Botão Salvar)
+      // FAB Principal (BotÃ£o Salvar)
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: kSuccessColor,
         elevation: 4,
         icon: const Icon(PhosphorIcons.floppy_disk,
             weight: 20, color: Colors.white),
-        label: Text("Salvar Diário",
+        label: Text("Salvar DiÃ¡rio",
             style: GoogleFonts.inter(
                 fontWeight: FontWeight.bold, color: Colors.white)),
         onPressed: () async {
@@ -177,7 +177,7 @@ class _ClassAttendanceScreenState extends State<ClassAttendanceScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text(
-                  success ? "Diário salvo com sucesso!" : "Erro ao salvar."),
+                  success ? "DiÃ¡rio salvo com sucesso!" : "Erro ao salvar."),
               backgroundColor: success ? kSuccessColor : kErrorColor,
               behavior: SnackBarBehavior.floating,
             ));
@@ -193,7 +193,7 @@ class _ClassAttendanceScreenState extends State<ClassAttendanceScreen> {
 // WIDGETS AUXILIARES (Design Atualizado)
 // =============================================================================
 
-// 1. SIDEBAR DE HISTÓRICO
+// 1. SIDEBAR DE HISTÃ“RICO
 class _SidebarHistory extends StatelessWidget {
   final ClassModel classData;
   final DateTime selectedDate;
@@ -247,7 +247,7 @@ class _SidebarHistory extends StatelessWidget {
                     onPressed: onBack,
                   ),
                   SizedBox(width: 8.w),
-                  Text("Histórico",
+                  Text("HistÃ³rico",
                       style: GoogleFonts.inter(
                           fontSize: 18.sp,
                           fontWeight: FontWeight.bold,
@@ -257,7 +257,7 @@ class _SidebarHistory extends StatelessWidget {
             ),
           ),
 
-          // Navegação de Mês
+          // NavegaÃ§Ã£o de MÃªs
           Container(
             margin: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
             padding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 12.w),
@@ -303,7 +303,7 @@ class _SidebarHistory extends StatelessWidget {
                         Icon(PhosphorIcons.calendar_x,
                             size: 40, color: kTextGrey.withOpacity(0.5)),
                         SizedBox(height: 10.h),
-                        Text("Sem registros neste mês",
+                        Text("Sem registros neste mÃªs",
                             style: GoogleFonts.inter(color: kTextGrey)),
                       ],
                     ),
@@ -678,7 +678,7 @@ class _StudentGrid extends StatelessWidget {
   }
 }
 
-// 4. MODAL DE HISTÓRICO
+// 4. MODAL DE HISTÃ“RICO
 class _StudentHistoryModal extends StatelessWidget {
   final String studentId;
   final String studentName;
@@ -773,7 +773,7 @@ class _StudentHistoryModal extends StatelessWidget {
                               ),
                             ),
                             Text(
-                              'Relatório Individual',
+                              'RelatÃ³rio Individual',
                               style: GoogleFonts.inter(
                                 fontSize: 12.sp,
                                 color: textMuted,
@@ -820,7 +820,7 @@ class _StudentHistoryModal extends StatelessWidget {
                                 ),
                               ),
                               Text(
-                                'Frequência',
+                                'FrequÃªncia',
                                 style: GoogleFonts.inter(
                                   fontSize: 12.sp,
                                   color: textMuted,
@@ -866,7 +866,7 @@ class _StudentHistoryModal extends StatelessWidget {
                   ),
                   SizedBox(height: 20.h),
                   Text(
-                    'Histórico de Ausências',
+                    'HistÃ³rico de AusÃªncias',
                     style: GoogleFonts.inter(
                       fontWeight: FontWeight.w600,
                       fontSize: 14.sp,

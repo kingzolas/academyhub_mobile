@@ -16,6 +16,10 @@ class InvoiceProvider extends ChangeNotifier {
   List<Invoice> _guardianInvoices = [];
   List<Invoice> get guardianInvoices => _guardianInvoices;
 
+  GuardianFinancialScoreContext? _guardianFinancialScoreContext;
+  GuardianFinancialScoreContext? get guardianFinancialScoreContext =>
+      _guardianFinancialScoreContext;
+
   bool _isLoading = false;
   bool get isLoading => _isLoading;
 
@@ -80,11 +84,14 @@ class InvoiceProvider extends ChangeNotifier {
     _setLoading(true);
     setError(null);
     try {
-      _guardianInvoices = await _invoiceService.getGuardianInvoices(
+      final response = await _invoiceService.getGuardianInvoices(
         token: token,
         studentId: studentId,
       );
+      _guardianInvoices = response.invoices;
+      _guardianFinancialScoreContext = response.financialScoreContext;
     } catch (e) {
+      _guardianFinancialScoreContext = null;
       setError(e.toString().replaceAll('Exception: ', ''));
     }
     _setLoading(false);

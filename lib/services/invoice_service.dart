@@ -68,7 +68,7 @@ class InvoiceService {
     }
   }
 
-  Future<List<Invoice>> getGuardianInvoices({
+  Future<GuardianInvoicesResponse> getGuardianInvoices({
     required String token,
     String? studentId,
   }) async {
@@ -84,11 +84,7 @@ class InvoiceService {
 
     if (response.statusCode == 200) {
       final Map<String, dynamic> data = jsonDecode(response.body);
-      final rawInvoices = data['invoices'] as List<dynamic>? ?? const [];
-      return rawInvoices
-          .whereType<Map<String, dynamic>>()
-          .map(Invoice.fromJson)
-          .toList();
+      return GuardianInvoicesResponse.fromJson(data);
     } else {
       String message = 'Falha ao buscar os boletos do responsável.';
       try {

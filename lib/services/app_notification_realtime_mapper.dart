@@ -1,4 +1,4 @@
-import 'package:academyhub_mobile/model/app_notification_model.dart';
+﻿import 'package:academyhub_mobile/model/app_notification_model.dart';
 import 'package:academyhub_mobile/model/guardian_official_document_model.dart';
 
 class AppNotificationRealtimeMapper {
@@ -7,8 +7,17 @@ class AppNotificationRealtimeMapper {
   static AppNotificationItem? fromWebSocketMessage(
     Map<String, dynamic> message, {
     String? currentStudentId,
+    List<String> linkedStudentIds = const [],
   }) {
     final type = message['type']?.toString().trim() ?? '';
+    if (type.startsWith('absence_justification_request_')) {
+      return _absenceRequestNotification(
+        message,
+        currentStudentId: currentStudentId,
+        linkedStudentIds: linkedStudentIds,
+      );
+    }
+
     if (!type.startsWith('official_document_')) return null;
 
     final payload = _mapValue(message['payload']);
@@ -18,9 +27,11 @@ class AppNotificationRealtimeMapper {
         _stringValue(_mapValue(payload['request'])?['studentId']) ??
         _stringValue(_mapValue(payload['document'])?['studentId']);
     final normalizedStudentId = (currentStudentId ?? '').trim();
-    if (normalizedStudentId.isNotEmpty &&
-        payloadStudentId != null &&
-        payloadStudentId != normalizedStudentId) {
+    if (!_studentAllowed(
+      payloadStudentId,
+      currentStudentId: normalizedStudentId,
+      linkedStudentIds: linkedStudentIds,
+    )) {
       return null;
     }
 
@@ -66,6 +77,63 @@ class AppNotificationRealtimeMapper {
         'requestId': requestId,
         'documentId': documentId,
         'documentType': documentType,
+        'status': status,
+        'sourceEvent': type,
+      }..removeWhere((_, value) => value == null),
+    );
+  }
+
+  static AppNotificationItem? _absenceRequestNotification(
+    Map<String, dynamic> message, {
+    String? currentStudentId,
+    List<String> linkedStudentIds = const [],
+  }) {
+    final type = message['type']?.toString().trim() ?? '';
+    final payload = _mapValue(message['payload']);
+    if (payload == null) return null;
+
+    final request = _mapValue(payload['request']);
+    final payloadStudentId = _stringValue(payload['studentId']) ??
+        _stringValue(request?['studentId']);
+
+    if (!_studentAllowed(
+      payloadStudentId,
+      currentStudentId: currentStudentId,
+      linkedStudentIds: linkedStudentIds,
+    )) {
+      return null;
+    }
+
+    final descriptor = _absenceDescriptor(type);
+    if (descriptor == null) return null;
+
+    final requestId = _stringValue(payload['requestId']) ??
+        _stringValue(request?['_id']) ??
+        _stringValue(request?['id']);
+    final status = _stringValue(payload['toStatus']) ??
+        _stringValue(payload['status']) ??
+        _stringValue(request?['status']) ??
+        type;
+    final studentName = _stringValue(payload['studentName']) ??
+        _stringValue(request?['studentName']) ??
+        'o aluno';
+    final stableId = requestId ?? '$payloadStudentId:$status';
+
+    return AppNotificationItem(
+      id: '$type:$stableId:$status',
+      threadKey: 'attendance:$stableId',
+      domain: AppNotificationDomain.academic,
+      type: type,
+      title: descriptor.title,
+      summary: descriptor.summary(studentName),
+      createdAt: _dateValue(payload['emittedAt']) ??
+          _dateValue(message['emittedAt']) ??
+          DateTime.now(),
+      priority: descriptor.priority,
+      routeKey: 'guardian.attendance',
+      metadata: {
+        'studentId': payloadStudentId,
+        'requestId': requestId,
         'status': status,
         'sourceEvent': type,
       }..removeWhere((_, value) => value == null),
@@ -174,6 +242,30 @@ class AppNotificationRealtimeMapper {
     if (value is DateTime) return value;
     return DateTime.tryParse(value.toString());
   }
+
+  static bool _studentAllowed(
+    String? payloadStudentId, {
+    String? currentStudentId,
+    List<String> linkedStudentIds = const [],
+  }) {
+    if (payloadStudentId == null || payloadStudentId.trim().isEmpty) {
+      return true;
+    }
+
+    final normalizedPayload = payloadStudentId.trim();
+    final normalizedCurrent = (currentStudentId ?? '').trim();
+    if (normalizedCurrent.isNotEmpty &&
+        normalizedPayload == normalizedCurrent) {
+      return true;
+    }
+
+    final linked = linkedStudentIds
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toSet();
+
+    return linked.isNotEmpty && linked.contains(normalizedPayload);
+  }
 }
 
 class _DocumentNotificationDescriptor {
@@ -186,4 +278,58 @@ class _DocumentNotificationDescriptor {
     required this.summary,
     required this.priority,
   });
+}
+
+class _AbsenceNotificationDescriptor {
+  final String title;
+  final String Function(String studentName) summary;
+  final AppNotificationPriority priority;
+
+  const _AbsenceNotificationDescriptor({
+    required this.title,
+    required this.summary,
+    required this.priority,
+  });
+}
+
+_AbsenceNotificationDescriptor? _absenceDescriptor(String type) {
+  switch (type) {
+    case 'absence_justification_request_approved':
+      return _AbsenceNotificationDescriptor(
+        title: 'Abono aprovado',
+        summary: (studentName) =>
+            'A escola aprovou a solicitação de abono de $studentName.',
+        priority: AppNotificationPriority.success,
+      );
+    case 'absence_justification_request_partially_approved':
+      return _AbsenceNotificationDescriptor(
+        title: 'Abono aprovado parcialmente',
+        summary: (studentName) =>
+            'A escola aprovou parte do período solicitado para $studentName.',
+        priority: AppNotificationPriority.warning,
+      );
+    case 'absence_justification_request_rejected':
+      return _AbsenceNotificationDescriptor(
+        title: 'Abono recusado',
+        summary: (studentName) =>
+            'A escola respondeu a solicitação de abono de $studentName.',
+        priority: AppNotificationPriority.warning,
+      );
+    case 'absence_justification_request_needs_information':
+      return _AbsenceNotificationDescriptor(
+        title: 'Complemento solicitado',
+        summary: (studentName) =>
+            'A escola pediu mais informações sobre o abono de $studentName.',
+        priority: AppNotificationPriority.warning,
+      );
+    case 'absence_justification_request_applied':
+      return _AbsenceNotificationDescriptor(
+        title: 'Abono aplicado',
+        summary: (studentName) =>
+            'Uma falta real de $studentName foi coberta pela solicitação aprovada.',
+        priority: AppNotificationPriority.success,
+      );
+    default:
+      return null;
+  }
 }

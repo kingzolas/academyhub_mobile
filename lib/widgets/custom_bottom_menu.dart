@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+﻿import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -28,6 +28,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
   // Ações do Responsável
   final VoidCallback? onGuardianRefresh;
   final VoidCallback? onGuardianDocuments;
+  final VoidCallback? onGuardianAttendance;
   final VoidCallback? onGuardianAccount;
   final VoidCallback? onGuardianStudentSwitcher;
 
@@ -48,6 +49,7 @@ class CustomSpeedDialMenu extends StatefulWidget {
     this.onStudentAction2,
     this.onGuardianRefresh,
     this.onGuardianDocuments,
+    this.onGuardianAttendance,
     this.onGuardianAccount,
     this.onGuardianStudentSwitcher,
     this.isProfessor = false,
@@ -107,7 +109,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
     if (widget.isGuardian) {
       return [
         _RadialMenuAction(
-          angle: 150,
+          angle: 160,
           distance: 140.h,
           icon: PhosphorIcons.arrow_clockwise_fill,
           label: 'Atualizar\ndados',
@@ -117,7 +119,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
           isBig: true,
         ),
         _RadialMenuAction(
-          angle: 90,
+          angle: 115,
           distance: 155.h,
           icon: PhosphorIcons.files_fill,
           label: 'Documen-\ntações',
@@ -127,7 +129,17 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
           isBig: true,
         ),
         _RadialMenuAction(
-          angle: 30,
+          angle: 65,
+          distance: 155.h,
+          icon: PhosphorIcons.check_circle_fill,
+          label: 'Frequên-\ncia',
+          color: const Color(0xFFF59E0B),
+          iconColor: Colors.white,
+          onTap: widget.onGuardianAttendance ?? () {},
+          isBig: true,
+        ),
+        _RadialMenuAction(
+          angle: 20,
           distance: 140.h,
           icon: PhosphorIcons.user_circle_fill,
           label: 'Minha\nconta',
@@ -237,7 +249,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final kPrimaryGreen = const Color(0xFF00A859);
+    const kPrimaryGreen = Color(0xFF00A859);
     final kBarColor = Theme.of(context).cardColor;
 
     final double barHeight = 80.h;
@@ -272,7 +284,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                       child: BackdropFilter(
                         filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
                         child: Container(
-                          color: Colors.black.withOpacity(0.6),
+                          color: Colors.black.withValues(alpha: 0.6),
                         ),
                       ),
                     );
@@ -313,7 +325,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
+                    color: Colors.black.withValues(alpha: 0.08),
                     blurRadius: 20,
                     offset: const Offset(0, -5),
                   ),
@@ -389,7 +401,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: kPrimaryGreen.withOpacity(0.4),
+                        color: kPrimaryGreen.withValues(alpha: 0.4),
                         blurRadius: 10,
                         offset: const Offset(0, 4),
                       ),
@@ -509,7 +521,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
+                            color: Colors.black.withValues(alpha: 0.3),
                             blurRadius: 10,
                             offset: const Offset(0, 4),
                           ),
@@ -536,7 +548,7 @@ class _CustomSpeedDialMenuState extends State<CustomSpeedDialMenu>
                         height: 1.1,
                         shadows: [
                           Shadow(
-                            color: Colors.black.withOpacity(0.8),
+                            color: Colors.black.withValues(alpha: 0.8),
                             blurRadius: 6,
                           ),
                         ],

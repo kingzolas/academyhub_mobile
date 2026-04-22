@@ -387,3 +387,178 @@ class InvoiceTutor {
         fullName: (json['fullName'] ?? 'Responsável').toString(),
       );
 }
+
+class GuardianInvoicesResponse {
+  final List<Invoice> invoices;
+  final GuardianFinancialScoreContext? financialScoreContext;
+
+  const GuardianInvoicesResponse({
+    required this.invoices,
+    this.financialScoreContext,
+  });
+
+  factory GuardianInvoicesResponse.fromJson(Map<String, dynamic> json) {
+    final rawInvoices = json['invoices'] as List<dynamic>? ?? const [];
+    return GuardianInvoicesResponse(
+      invoices: rawInvoices
+          .whereType<Map<String, dynamic>>()
+          .map(Invoice.fromJson)
+          .toList(),
+      financialScoreContext:
+          json['financialScoreContext'] is Map<String, dynamic>
+              ? GuardianFinancialScoreContext.fromJson(
+                  json['financialScoreContext'] as Map<String, dynamic>,
+                )
+              : null,
+    );
+  }
+}
+
+class GuardianFinancialScoreContext {
+  final bool available;
+  final String ownerStatus;
+  final GuardianFinancialScoreOwner? owner;
+  final GuardianFinancialScore? score;
+
+  const GuardianFinancialScoreContext({
+    required this.available,
+    required this.ownerStatus,
+    this.owner,
+    this.score,
+  });
+
+  bool get hasScore => available && score != null;
+
+  factory GuardianFinancialScoreContext.fromJson(Map<String, dynamic> json) {
+    return GuardianFinancialScoreContext(
+      available: json['available'] == true,
+      ownerStatus: (json['ownerStatus'] ?? '').toString(),
+      owner: json['owner'] is Map<String, dynamic>
+          ? GuardianFinancialScoreOwner.fromJson(
+              json['owner'] as Map<String, dynamic>,
+            )
+          : null,
+      score: json['score'] is Map<String, dynamic>
+          ? GuardianFinancialScore.fromJson(
+              json['score'] as Map<String, dynamic>,
+            )
+          : null,
+    );
+  }
+}
+
+class GuardianFinancialScoreOwner {
+  final String tutorId;
+  final String fullName;
+  final String? relationship;
+
+  const GuardianFinancialScoreOwner({
+    required this.tutorId,
+    required this.fullName,
+    this.relationship,
+  });
+
+  factory GuardianFinancialScoreOwner.fromJson(Map<String, dynamic> json) {
+    return GuardianFinancialScoreOwner(
+      tutorId: (json['tutorId'] ?? '').toString(),
+      fullName: (json['fullName'] ?? 'Responsável').toString(),
+      relationship: json['relationship']?.toString(),
+    );
+  }
+}
+
+class GuardianFinancialScore {
+  final int value;
+  final String classification;
+  final String status;
+  final String confidenceLevel;
+  final GuardianFinancialScoreSummary summary;
+
+  const GuardianFinancialScore({
+    required this.value,
+    required this.classification,
+    required this.status,
+    required this.confidenceLevel,
+    required this.summary,
+  });
+
+  factory GuardianFinancialScore.fromJson(Map<String, dynamic> json) {
+    return GuardianFinancialScore(
+      value: _toScoreInt(json['value'], fallback: 600),
+      classification: (json['classification'] ?? 'moderate').toString(),
+      status: (json['status'] ?? 'not_calculated').toString(),
+      confidenceLevel: (json['confidenceLevel'] ?? 'low').toString(),
+      summary: GuardianFinancialScoreSummary.fromJson(
+        json['summary'] is Map<String, dynamic>
+            ? json['summary'] as Map<String, dynamic>
+            : const {},
+      ),
+    );
+  }
+}
+
+class GuardianFinancialScoreSummary {
+  final int totalInvoices;
+  final int paidOnTime;
+  final int paidLate;
+  final int unpaidOverdue;
+  final int consecutiveOnTimePayments;
+  final int consecutiveLatePayments;
+  final double averageDelayDays;
+  final int worstDelayDays;
+  final double totalOverdueAmount;
+  final DateTime? lastPaymentAt;
+  final DateTime? lastCalculatedAt;
+
+  const GuardianFinancialScoreSummary({
+    required this.totalInvoices,
+    required this.paidOnTime,
+    required this.paidLate,
+    required this.unpaidOverdue,
+    required this.consecutiveOnTimePayments,
+    required this.consecutiveLatePayments,
+    required this.averageDelayDays,
+    required this.worstDelayDays,
+    required this.totalOverdueAmount,
+    this.lastPaymentAt,
+    this.lastCalculatedAt,
+  });
+
+  factory GuardianFinancialScoreSummary.fromJson(Map<String, dynamic> json) {
+    return GuardianFinancialScoreSummary(
+      totalInvoices: _toScoreInt(json['totalInvoices']),
+      paidOnTime: _toScoreInt(json['paidOnTime']),
+      paidLate: _toScoreInt(json['paidLate']),
+      unpaidOverdue: _toScoreInt(json['unpaidOverdue']),
+      consecutiveOnTimePayments: _toScoreInt(json['consecutiveOnTimePayments']),
+      consecutiveLatePayments: _toScoreInt(json['consecutiveLatePayments']),
+      averageDelayDays: _toScoreDouble(json['averageDelayDays']),
+      worstDelayDays: _toScoreInt(json['worstDelayDays']),
+      totalOverdueAmount: _toScoreDouble(json['totalOverdueAmount']),
+      lastPaymentAt: _toScoreDate(json['lastPaymentAt']),
+      lastCalculatedAt: _toScoreDate(json['lastCalculatedAt']),
+    );
+  }
+}
+
+int _toScoreInt(dynamic value, {int fallback = 0}) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value) ?? fallback;
+  return fallback;
+}
+
+double _toScoreDouble(dynamic value) {
+  if (value is double) return value;
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value) ?? 0;
+  return 0;
+}
+
+DateTime? _toScoreDate(dynamic value) {
+  if (value is DateTime) return value;
+  if (value is String && value.trim().isNotEmpty) {
+    return DateTime.tryParse(value);
+  }
+  return null;
+}

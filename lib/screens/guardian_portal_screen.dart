@@ -46,6 +46,10 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   String? _focusedDocumentRequestId;
   String? _focusedDocumentId;
   int _documentsFocusNonce = 0;
+  String? _focusedAbsenceRequestId;
+  int _attendanceFocusNonce = 0;
+  int _attendanceRefreshNonce = 0;
+  _GuardianFinanceFilter _financeFilter = _GuardianFinanceFilter.priority;
 
   String get _currentSectionLabel {
     switch (_currentIndex) {
@@ -57,6 +61,8 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
         return 'Conta';
       case 4:
         return 'Documentações';
+      case 5:
+        return 'Frequência';
       case 0:
       default:
         return 'Início';
@@ -101,7 +107,20 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       context.read<AppNotificationProvider>().handleRealtimeEvent(
             message,
             currentStudentId: _selectedStudent?.id,
+            linkedStudentIds: _portalHome?.linkedStudents
+                    .map((student) => student.id)
+                    .toList() ??
+                const [],
           );
+
+      final type = message['type']?.toString().trim() ?? '';
+      if (type.startsWith('absence_justification_request_')) {
+        setState(() => _attendanceRefreshNonce++);
+        if (_currentIndex == 5) {
+          final feedback = _attendanceRealtimeFeedback(type);
+          if (feedback != null) _showFeedback(feedback);
+        }
+      }
 
       final handled =
           context.read<GuardianOfficialDocumentsProvider>().handleRealtimeEvent(
@@ -138,6 +157,26 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
         _focusedDocumentId = notification.metadata['documentId']?.toString();
         _documentsFocusNonce++;
       });
+      return;
+    }
+
+    if (notification.routeKey == 'guardian.attendance' ||
+        notification.domain == AppNotificationDomain.academic) {
+      final studentId = notification.metadata['studentId']?.toString();
+      if ((studentId ?? '').trim().isNotEmpty) {
+        _selectedStudentId = studentId!.trim();
+        unawaited(
+          context.read<AuthProvider>().setGuardianSelectedStudentId(
+                _selectedStudentId,
+              ),
+        );
+      }
+      setState(() {
+        _currentIndex = 5;
+        _focusedAbsenceRequestId =
+            notification.metadata['requestId']?.toString();
+        _attendanceFocusNonce++;
+      });
     }
   }
 
@@ -162,6 +201,23 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
         return 'Documento oficial disponível para abrir ou baixar.';
       case 'official_document_downloaded':
         return 'Download registrado no protocolo.';
+      default:
+        return null;
+    }
+  }
+
+  String? _attendanceRealtimeFeedback(String? type) {
+    switch (type) {
+      case 'absence_justification_request_approved':
+        return 'A escola aprovou uma solicitação de abono.';
+      case 'absence_justification_request_partially_approved':
+        return 'A escola aprovou parte do período solicitado.';
+      case 'absence_justification_request_rejected':
+        return 'A escola respondeu uma solicitação de abono.';
+      case 'absence_justification_request_needs_information':
+        return 'A escola solicitou complemento para um abono.';
+      case 'absence_justification_request_applied':
+        return 'Um abono aprovado foi aplicado em uma falta registrada.';
       default:
         return null;
     }
@@ -352,11 +408,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       return;
     }
 
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GuardianAttendanceScreen(student: student),
-      ),
-    );
+    setState(() => _currentIndex = 5);
   }
 
   Future<void> _openActivitiesScreen() async {
@@ -440,6 +492,9 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                         await _loadGuardianPortalData(studentId: student.id);
                         await _loadGuardianInvoices(studentId: student.id);
                         await _loadGuardianDocuments(studentId: student.id);
+                        if (mounted) {
+                          setState(() => _attendanceRefreshNonce++);
+                        }
                       },
                     ),
                   ),
@@ -966,6 +1021,11 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     InvoiceProvider invoiceProvider,
   ) {
     final invoiceGroups = _invoiceGroups(invoiceProvider.guardianInvoices);
+    final scoreContext = invoiceProvider.guardianFinancialScoreContext;
+    final availableScoreContext =
+        scoreContext != null && scoreContext.hasScore ? scoreContext : null;
+    final selectedInvoices = _financeInvoicesForFilter(invoiceGroups);
+    final selectedTitle = _financeFilterTitle(_financeFilter);
 
     return RefreshIndicator(
       color: const Color(0xFF00A859),
@@ -977,7 +1037,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
           _buildHeaderBlock(
             title: 'Financeiro',
             subtitle:
-                'Acompanhe seus boletos, veja prioridades e resolva tudo com o código correto e abertura rápida do PDF.',
+                'Veja o que precisa de atenção agora, acompanhe seu score financeiro e encontre boletos por status sem procurar na rolagem.',
           ),
           SizedBox(height: 18.h),
           if (invoiceProvider.error != null &&
@@ -995,46 +1055,51 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
             )
           else if (invoiceGroups.featured != null)
             _buildFeaturedCard(invoiceGroups.featured!),
+          if (availableScoreContext != null) ...[
+            SizedBox(height: 14.h),
+            _GuardianFinancialScoreCard(
+              scoreContext: availableScoreContext,
+              onDetails: () =>
+                  _showFinancialScoreDetails(availableScoreContext),
+            ),
+          ],
           SizedBox(height: 18.h),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricCard(
-                  label: 'Pendentes',
-                  count: invoiceGroups.pending.length,
-                  color: const Color(0xFFF59E0B),
-                ),
-              ),
-              SizedBox(width: 10.w),
-              Expanded(
-                child: _MetricCard(
-                  label: 'Em atraso',
-                  count: invoiceGroups.overdue.length,
-                  color: const Color(0xFFEF4444),
-                ),
-              ),
-              SizedBox(width: 10.w),
-              Expanded(
-                child: _MetricCard(
-                  label: 'Pagos',
-                  count: invoiceGroups.paid.length,
-                  color: const Color(0xFF00A859),
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: 20.h),
-          _buildInvoiceSection('Em atraso', invoiceGroups.overdue),
-          SizedBox(height: 16.h),
-          _buildInvoiceSection('Pendentes', invoiceGroups.pending),
+          _buildFinanceFilterBar(invoiceGroups),
           SizedBox(height: 16.h),
           _buildInvoiceSection(
-            'Pagos',
-            invoiceGroups.paid.take(4).toList(),
-            showPaidAccent: true,
+            selectedTitle,
+            selectedInvoices,
+            showPaidAccent: _financeFilter == _GuardianFinanceFilter.paid,
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildAttendanceTab() {
+    final student = _selectedStudent;
+
+    if (student == null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: EdgeInsets.fromLTRB(20.w, 84.h, 20.w, 128.h),
+        children: const [
+          _EmptyStateCard(
+            title: 'Sem aluno selecionado',
+            message:
+                'Assim que houver um aluno vinculado a este acesso, a frequência ficará disponível aqui.',
+          ),
+        ],
+      );
+    }
+
+    return GuardianAttendanceScreen(
+      student: student,
+      embedded: true,
+      bottomPadding: 128,
+      focusRequestId: _focusedAbsenceRequestId,
+      focusNonce: _attendanceFocusNonce,
+      realtimeRefreshNonce: _attendanceRefreshNonce,
     );
   }
 
@@ -1294,6 +1359,110 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     );
   }
 
+  void _showFinancialScoreDetails(GuardianFinancialScoreContext scoreContext) {
+    final score = scoreContext.score;
+    if (score == null) return;
+
+    final summary = score.summary;
+    final ownerName = (scoreContext.owner?.fullName ?? '').trim().isNotEmpty
+        ? scoreContext.owner!.fullName
+        : 'Responsável autenticado';
+    final relationship = scoreContext.owner?.relationship;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _guardianSurface(context),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28.r)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(24.w, 16.h, 24.w, 28.h),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 48.w,
+                    height: 5.h,
+                    decoration: BoxDecoration(
+                      color: _guardianBorder(context),
+                      borderRadius: BorderRadius.circular(999.r),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 22.h),
+                Text(
+                  'Score financeiro',
+                  style: GoogleFonts.inter(
+                    color: _guardianTextPrimary(context),
+                    fontSize: 20.sp,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                SizedBox(height: 8.h),
+                Text(
+                  'Este score pertence ao responsável autenticado neste acesso. Quando há mais de um aluno vinculado, a leitura continua sendo do responsável, não de um aluno isolado.',
+                  style: GoogleFonts.inter(
+                    color: _guardianTextSecondary(context),
+                    fontSize: 12.5.sp,
+                    fontWeight: FontWeight.w500,
+                    height: 1.45,
+                  ),
+                ),
+                SizedBox(height: 16.h),
+                _InfoCard(
+                  label: 'Responsável',
+                  value: [
+                    ownerName,
+                    if ((relationship ?? '').trim().isNotEmpty) relationship,
+                  ].join(' · '),
+                ),
+                SizedBox(height: 10.h),
+                _InfoCard(
+                  label: 'Faixa atual',
+                  value:
+                      '${score.value} de 1000 · ${_scoreClassificationLabel(score.classification)}',
+                ),
+                SizedBox(height: 10.h),
+                _InfoCard(
+                  label: 'Confiança da leitura',
+                  value: _scoreConfidenceLabel(score.confidenceLevel),
+                ),
+                SizedBox(height: 10.h),
+                _InfoCard(
+                  label: 'Última atualização',
+                  value: _scoreUpdatedLabel(summary.lastCalculatedAt),
+                ),
+                SizedBox(height: 10.h),
+                _InfoCard(
+                  label: 'Base analisada',
+                  value:
+                      '${summary.totalInvoices} boletos analisados, ${summary.paidOnTime} pagos em dia, ${summary.paidLate} pagos com atraso e ${summary.unpaidOverdue} vencidos em aberto.',
+                ),
+                if (summary.totalOverdueAmount > 0) ...[
+                  SizedBox(height: 10.h),
+                  _InfoCard(
+                    label: 'Valor vencido em aberto',
+                    value: _formatCurrency(summary.totalOverdueAmount.round()),
+                  ),
+                ],
+                SizedBox(height: 10.h),
+                _InfoCard(
+                  label: 'Leitura atual',
+                  value: _buildScoreReading(score),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildFeaturedCard(Invoice invoice) {
     final state = _resolveInvoiceState(invoice);
     final accent = _buildStatusColor(state);
@@ -1353,32 +1522,70 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
             ),
           ),
           SizedBox(height: 18.h),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _copyInvoiceCode(invoice),
-                  icon: Icon(PhosphorIcons.copy_simple, size: 16.sp),
-                  label: const Text('Copiar código'),
-                ),
-              ),
-              SizedBox(width: 10.w),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: () => _openInvoiceBoleto(invoice),
-                  icon: Icon(PhosphorIcons.download_simple, size: 16.sp),
-                  label: const Text('Abrir boleto'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: accent,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                  ),
-                ),
-              ),
-            ],
+          _InvoiceCardActionBar(
+            accent: accent,
+            onOpenBoleto: () => _openInvoiceBoleto(invoice),
+            onCopyCode: () => _copyInvoiceCode(invoice),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildFinanceFilterBar(_GuardianInvoiceGroups groups) {
+    final totalActionable = groups.overdue.length + groups.pending.length;
+    final items = [
+      (
+        filter: _GuardianFinanceFilter.priority,
+        label: 'Agora',
+        count: totalActionable,
+        color: totalActionable > 0
+            ? const Color(0xFF00A859)
+            : _guardianTextSecondary(context),
+      ),
+      (
+        filter: _GuardianFinanceFilter.overdue,
+        label: 'Atrasados',
+        count: groups.overdue.length,
+        color: const Color(0xFFEF4444),
+      ),
+      (
+        filter: _GuardianFinanceFilter.pending,
+        label: 'Pendentes',
+        count: groups.pending.length,
+        color: const Color(0xFFF59E0B),
+      ),
+      (
+        filter: _GuardianFinanceFilter.paid,
+        label: 'Pagos',
+        count: groups.paid.length,
+        color: const Color(0xFF00A859),
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gap = 8.w;
+        final itemWidth = (constraints.maxWidth - gap) / 2;
+
+        return Wrap(
+          spacing: gap,
+          runSpacing: 8.h,
+          children: [
+            for (final item in items)
+              SizedBox(
+                width: itemWidth,
+                child: _FinanceFilterPill(
+                  label: item.label,
+                  count: item.count,
+                  color: item.color,
+                  selected: _financeFilter == item.filter,
+                  onTap: () => setState(() => _financeFilter = item.filter),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -1388,11 +1595,16 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     bool showPaidAccent = false,
   }) {
     if (items.isEmpty) {
+      final isPriority = title == 'Prioridade agora';
       return _EmptyStateCard(
-        title: '$title sem itens',
+        title: isPriority
+            ? 'Nenhuma cobrança para pagar agora'
+            : '$title sem itens',
         message: title == 'Pagos'
             ? 'Os boletos pagos mais recentes aparecerão aqui.'
-            : 'Quando houver boletos nesta categoria, eles aparecerão nesta seção.',
+            : isPriority
+                ? 'Quando houver boleto vencido ou próximo vencimento, ele aparecerá neste filtro.'
+                : 'Quando houver boletos nesta categoria, eles aparecerão nesta seção.',
       );
     }
 
@@ -1422,6 +1634,33 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
         ),
       ],
     );
+  }
+
+  List<Invoice> _financeInvoicesForFilter(_GuardianInvoiceGroups groups) {
+    switch (_financeFilter) {
+      case _GuardianFinanceFilter.overdue:
+        return groups.overdue;
+      case _GuardianFinanceFilter.pending:
+        return groups.pending;
+      case _GuardianFinanceFilter.paid:
+        return groups.paid;
+      case _GuardianFinanceFilter.priority:
+        if (groups.overdue.isNotEmpty) return groups.overdue;
+        return groups.pending;
+    }
+  }
+
+  String _financeFilterTitle(_GuardianFinanceFilter filter) {
+    switch (filter) {
+      case _GuardianFinanceFilter.overdue:
+        return 'Atrasados';
+      case _GuardianFinanceFilter.pending:
+        return 'Pendentes';
+      case _GuardianFinanceFilter.paid:
+        return 'Pagos';
+      case _GuardianFinanceFilter.priority:
+        return 'Prioridade agora';
+    }
   }
 
   _GuardianInvoiceGroups _invoiceGroups(List<Invoice> invoices) {
@@ -1602,6 +1841,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
                   focusDocumentId: _focusedDocumentId,
                   focusNonce: _documentsFocusNonce,
                 ),
+                _buildAttendanceTab(),
               ],
             ),
           ),
@@ -1614,6 +1854,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
               isGuardian: true,
               onGuardianRefresh: _refreshGuardianPortal,
               onGuardianDocuments: () => _onTabTapped(4),
+              onGuardianAttendance: () => _onTabTapped(5),
               onGuardianAccount: () => _onTabTapped(3),
               onGuardianStudentSwitcher: (session?.linkedStudentsCount ?? 0) > 1
                   ? _showStudentPicker
@@ -1719,6 +1960,8 @@ class _NotificationBellButton extends StatelessWidget {
   }
 }
 
+enum _GuardianFinanceFilter { priority, overdue, pending, paid }
+
 enum _InvoiceState { pending, overdue, paid, canceled }
 
 bool _isDarkContext(BuildContext context) =>
@@ -1800,6 +2043,67 @@ String _buildStatusLabel(_InvoiceState state) {
   }
 }
 
+String _scoreClassificationLabel(String classification) {
+  switch (classification.toLowerCase().trim()) {
+    case 'excellent':
+      return 'Excelente';
+    case 'good':
+      return 'Bom';
+    case 'risk':
+      return 'Atenção';
+    case 'high_risk':
+      return 'Crítico';
+    case 'moderate':
+    default:
+      return 'Moderado';
+  }
+}
+
+Color _scoreClassificationColor(String classification) {
+  switch (classification.toLowerCase().trim()) {
+    case 'excellent':
+      return const Color(0xFF00A859);
+    case 'good':
+      return const Color(0xFF2F80ED);
+    case 'risk':
+      return const Color(0xFFF59E0B);
+    case 'high_risk':
+      return const Color(0xFFEF4444);
+    case 'moderate':
+    default:
+      return const Color(0xFF7C3AED);
+  }
+}
+
+String _scoreConfidenceLabel(String confidenceLevel) {
+  switch (confidenceLevel.toLowerCase().trim()) {
+    case 'high':
+      return 'Alta';
+    case 'medium':
+      return 'Média';
+    case 'low':
+    default:
+      return 'Baixa';
+  }
+}
+
+String _buildScoreReading(GuardianFinancialScore score) {
+  final summary = score.summary;
+  if (summary.unpaidOverdue > 0) {
+    return 'Há boletos vencidos influenciando esta leitura. Regularizar os itens em atraso é o caminho mais importante agora.';
+  }
+  if (summary.paidLate > 0) {
+    return 'A leitura considera pagamentos já quitados com atraso. Manter os próximos vencimentos em dia ajuda a estabilizar o score.';
+  }
+  if (summary.consecutiveOnTimePayments >= 3) {
+    return 'Os pagamentos recentes em dia fortalecem esta leitura e indicam boa previsibilidade financeira.';
+  }
+  if (summary.totalInvoices == 0) {
+    return 'Ainda há poucos dados financeiros para uma leitura completa deste responsável.';
+  }
+  return 'O score resume o comportamento financeiro atual registrado pela escola, sem histórico de variação nesta versão.';
+}
+
 String _buildFeaturedLabel(_InvoiceState state) {
   switch (state) {
     case _InvoiceState.overdue:
@@ -1847,6 +2151,11 @@ String _buildReferenceLabel(Invoice invoice) {
 
 String _buildDate(DateTime date) {
   return DateFormat('dd/MM/yyyy', 'pt_BR').format(date);
+}
+
+String _scoreUpdatedLabel(DateTime? date) {
+  if (date == null) return 'Ainda sem cálculo recente';
+  return _buildDate(date);
 }
 
 String _buildDueText(Invoice invoice) {
@@ -2967,6 +3276,281 @@ class _PortalFinanceSpotlight extends StatelessWidget {
   }
 }
 
+class _GuardianFinancialScoreCard extends StatelessWidget {
+  final GuardianFinancialScoreContext scoreContext;
+  final VoidCallback onDetails;
+
+  const _GuardianFinancialScoreCard({
+    required this.scoreContext,
+    required this.onDetails,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final score = scoreContext.score!;
+    final accent = _scoreClassificationColor(score.classification);
+    final normalized = score.value.clamp(0, 1000).toDouble() / 1000;
+    final ownerName = (scoreContext.owner?.fullName ?? '').trim();
+
+    return Container(
+      padding: EdgeInsets.all(18.r),
+      decoration: BoxDecoration(
+        color: _guardianSurface(context),
+        borderRadius: BorderRadius.circular(24.r),
+        border: Border.all(color: accent.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 42.w,
+                height: 42.w,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16.r),
+                ),
+                child: Icon(
+                  PhosphorIcons.chart_line_up,
+                  color: accent,
+                  size: 22.sp,
+                ),
+              ),
+              SizedBox(width: 12.w),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Score financeiro',
+                      style: GoogleFonts.inter(
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.w800,
+                        color: _guardianTextPrimary(context),
+                      ),
+                    ),
+                    SizedBox(height: 3.h),
+                    Text(
+                      ownerName.isEmpty
+                          ? 'Leitura do responsável autenticado.'
+                          : 'Leitura de $ownerName.',
+                      style: GoogleFonts.inter(
+                        fontSize: 11.5.sp,
+                        fontWeight: FontWeight.w500,
+                        color: _guardianTextSecondary(context),
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: onDetails,
+                style: TextButton.styleFrom(
+                  minimumSize: Size(44.w, 36.h),
+                  padding: EdgeInsets.symmetric(horizontal: 8.w),
+                ),
+                child: const Text('Entender'),
+              ),
+            ],
+          ),
+          SizedBox(height: 16.h),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${score.value}',
+                style: GoogleFonts.inter(
+                  fontSize: 30.sp,
+                  fontWeight: FontWeight.w900,
+                  color: _guardianTextPrimary(context),
+                  height: 1,
+                ),
+              ),
+              SizedBox(width: 5.w),
+              Padding(
+                padding: EdgeInsets.only(bottom: 2.h),
+                child: Text(
+                  '/1000',
+                  style: GoogleFonts.inter(
+                    fontSize: 12.sp,
+                    fontWeight: FontWeight.w700,
+                    color: _guardianTextSecondary(context),
+                  ),
+                ),
+              ),
+              const Spacer(),
+              _StatusChip(
+                label: _scoreClassificationLabel(score.classification),
+                color: accent,
+              ),
+            ],
+          ),
+          SizedBox(height: 12.h),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999.r),
+            child: LinearProgressIndicator(
+              minHeight: 7.h,
+              value: normalized,
+              backgroundColor: _guardianBorder(context),
+              valueColor: AlwaysStoppedAnimation<Color>(accent),
+            ),
+          ),
+          SizedBox(height: 12.h),
+          Text(
+            _buildScoreReading(score),
+            style: GoogleFonts.inter(
+              fontSize: 12.5.sp,
+              fontWeight: FontWeight.w500,
+              color: _guardianTextSecondary(context),
+              height: 1.45,
+            ),
+          ),
+          SizedBox(height: 12.h),
+          Row(
+            children: [
+              Expanded(
+                child: _ScoreMetaPill(
+                  label: 'Confiança',
+                  value: _scoreConfidenceLabel(score.confidenceLevel),
+                ),
+              ),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: _ScoreMetaPill(
+                  label: 'Atualizado',
+                  value: _scoreUpdatedLabel(score.summary.lastCalculatedAt),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScoreMetaPill extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _ScoreMetaPill({
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+      decoration: BoxDecoration(
+        color: _guardianSoftSurface(context),
+        borderRadius: BorderRadius.circular(16.r),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 10.sp,
+              fontWeight: FontWeight.w700,
+              color: _guardianTextSecondary(context),
+            ),
+          ),
+          SizedBox(height: 3.h),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.inter(
+              fontSize: 11.5.sp,
+              fontWeight: FontWeight.w800,
+              color: _guardianTextPrimary(context),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FinanceFilterPill extends StatelessWidget {
+  final String label;
+  final int count;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FinanceFilterPill({
+    required this.label,
+    required this.count,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999.r),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        constraints: BoxConstraints(minHeight: 48.h),
+        padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+        decoration: BoxDecoration(
+          color: selected
+              ? color.withValues(alpha: _isDarkContext(context) ? 0.2 : 0.12)
+              : _guardianSurface(context),
+          borderRadius: BorderRadius.circular(999.r),
+          border: Border.all(
+            color: selected
+                ? color.withValues(alpha: 0.55)
+                : _guardianBorder(context),
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w800,
+                  color: selected ? color : _guardianTextPrimary(context),
+                ),
+              ),
+            ),
+            SizedBox(width: 8.w),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 7.w, vertical: 3.h),
+              decoration: BoxDecoration(
+                color: selected
+                    ? color.withValues(alpha: 0.16)
+                    : _guardianSoftSurface(context),
+                borderRadius: BorderRadius.circular(999.r),
+              ),
+              child: Text(
+                '$count',
+                style: GoogleFonts.inter(
+                  fontSize: 10.sp,
+                  fontWeight: FontWeight.w900,
+                  color: selected ? color : _guardianTextSecondary(context),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _InvoiceListTileCard extends StatelessWidget {
   final Invoice invoice;
   final bool highlightPaid;
@@ -2988,94 +3572,162 @@ class _InvoiceListTileCard extends StatelessWidget {
     final accent =
         highlightPaid ? const Color(0xFF00A859) : _buildStatusColor(state);
 
-    return Container(
-      padding: EdgeInsets.all(16.r),
-      decoration: BoxDecoration(
-        color: _guardianSurface(context),
-        borderRadius: BorderRadius.circular(22.r),
-        border: Border.all(color: accent.withValues(alpha: 0.15)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _buildReferenceLabel(invoice),
-                      style: GoogleFonts.inter(
-                        fontSize: 10.5.sp,
-                        fontWeight: FontWeight.w800,
-                        color: accent,
+    return InkWell(
+      onTap: onDetails,
+      borderRadius: BorderRadius.circular(22.r),
+      child: Container(
+        padding: EdgeInsets.all(16.r),
+        decoration: BoxDecoration(
+          color: _guardianSurface(context),
+          borderRadius: BorderRadius.circular(22.r),
+          border: Border.all(color: accent.withValues(alpha: 0.15)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _buildReferenceLabel(invoice),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 10.5.sp,
+                          fontWeight: FontWeight.w800,
+                          color: accent,
+                        ),
                       ),
-                    ),
-                    SizedBox(height: 4.h),
-                    Text(
-                      invoice.description,
-                      style: GoogleFonts.inter(
-                        fontSize: 15.sp,
-                        fontWeight: FontWeight.w700,
-                        color: _guardianTextPrimary(context),
+                      SizedBox(height: 4.h),
+                      Text(
+                        invoice.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 15.sp,
+                          fontWeight: FontWeight.w700,
+                          color: _guardianTextPrimary(context),
+                        ),
                       ),
+                    ],
+                  ),
+                ),
+                _StatusChip(label: _buildStatusLabel(state), color: accent),
+                SizedBox(width: 4.w),
+                SizedBox(
+                  width: 36.w,
+                  height: 36.w,
+                  child: IconButton(
+                    tooltip: 'Detalhes',
+                    onPressed: onDetails,
+                    padding: EdgeInsets.zero,
+                    icon: Icon(
+                      PhosphorIcons.info,
+                      size: 18.sp,
+                      color: _guardianTextSecondary(context),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-              _StatusChip(label: _buildStatusLabel(state), color: accent),
-            ],
-          ),
-          SizedBox(height: 10.h),
-          Text(
-            _formatCurrency(invoice.value),
-            style: GoogleFonts.inter(
-              color: _guardianTextPrimary(context),
-              fontSize: 20.sp,
-              fontWeight: FontWeight.w800,
+              ],
             ),
-          ),
-          SizedBox(height: 6.h),
-          Text(
-            _buildDueText(invoice),
-            style: GoogleFonts.inter(
-              fontSize: 13.sp,
-              fontWeight: FontWeight.w500,
-              color: _guardianTextSecondary(context),
+            SizedBox(height: 10.h),
+            Text(
+              _formatCurrency(invoice.value),
+              style: GoogleFonts.inter(
+                color: _guardianTextPrimary(context),
+                fontSize: 20.sp,
+                fontWeight: FontWeight.w800,
+              ),
             ),
-          ),
-          SizedBox(height: 14.h),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onCopyCode,
-                  icon: Icon(PhosphorIcons.copy_simple, size: 15.sp),
-                  label: const Text('Copiar'),
-                ),
+            SizedBox(height: 6.h),
+            Text(
+              _buildDueText(invoice),
+              style: GoogleFonts.inter(
+                fontSize: 13.sp,
+                fontWeight: FontWeight.w500,
+                color: _guardianTextSecondary(context),
               ),
-              SizedBox(width: 10.w),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onOpenBoleto,
-                  icon: Icon(PhosphorIcons.download_simple, size: 15.sp),
-                  label: const Text('Abrir'),
-                ),
-              ),
-              SizedBox(width: 10.w),
-              Expanded(
-                child: TextButton.icon(
-                  onPressed: onDetails,
-                  icon: Icon(PhosphorIcons.info, size: 15.sp),
-                  label: const Text('Detalhes'),
-                ),
-              ),
-            ],
-          ),
-        ],
+            ),
+            SizedBox(height: 14.h),
+            _InvoiceCardActionBar(
+              accent: accent,
+              onOpenBoleto: onOpenBoleto,
+              onCopyCode: onCopyCode,
+            ),
+          ],
+        ),
       ),
+    );
+  }
+}
+
+class _InvoiceCardActionBar extends StatelessWidget {
+  final Color accent;
+  final Future<void> Function() onOpenBoleto;
+  final Future<void> Function() onCopyCode;
+
+  const _InvoiceCardActionBar({
+    required this.accent,
+    required this.onOpenBoleto,
+    required this.onCopyCode,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 340.w;
+        final openButton = ElevatedButton.icon(
+          onPressed: onOpenBoleto,
+          icon: Icon(PhosphorIcons.download_simple, size: 16.sp),
+          label: const Text(
+            'Abrir boleto',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: accent,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            minimumSize: Size.fromHeight(44.h),
+          ),
+        );
+        final copyButton = OutlinedButton.icon(
+          onPressed: onCopyCode,
+          icon: Icon(PhosphorIcons.copy_simple, size: 15.sp),
+          label: const Text(
+            'Copiar código',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          style: OutlinedButton.styleFrom(
+            minimumSize: Size.fromHeight(44.h),
+          ),
+        );
+
+        if (isNarrow) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              openButton,
+              SizedBox(height: 8.h),
+              copyButton,
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            Expanded(child: openButton),
+            SizedBox(width: 10.w),
+            Expanded(child: copyButton),
+          ],
+        );
+      },
     );
   }
 }

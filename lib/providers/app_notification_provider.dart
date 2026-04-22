@@ -14,10 +14,12 @@ class AppNotificationProvider extends ChangeNotifier {
   bool handleRealtimeEvent(
     Map<String, dynamic> message, {
     String? currentStudentId,
+    List<String> linkedStudentIds = const [],
   }) {
     final notification = AppNotificationRealtimeMapper.fromWebSocketMessage(
       message,
       currentStudentId: currentStudentId,
+      linkedStudentIds: linkedStudentIds,
     );
     if (notification == null) return false;
 

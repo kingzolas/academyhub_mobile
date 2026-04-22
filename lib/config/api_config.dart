@@ -32,12 +32,12 @@ class ApiConfig {
   //   }
   //   return baseUrl;
   // }
-  // static const String frontendUrl =
-  //     'https://monumental-mochi-037b2b.netlify.app/';
-  // static const String baseUrl = 'http://localhost:3000';
+//   static const String frontendUrl =
+//       'https://monumental-mochi-037b2b.netlify.app/';
+//   static const String baseUrl = 'http://localhost:3000';
 
-  // static const String apiUrl = '$baseUrl/api';
-  // static const String wsUrl = 'ws://localhost:3000';
+//   static const String apiUrl = '$baseUrl/api';
+//   static const String wsUrl = 'ws://localhost:3000';
 
   static const String apiUrl = '$baseUrl/api';
 
