@@ -138,6 +138,15 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   }
 
   void _openNotificationCenter() {
+    final token = context.read<AuthProvider>().token;
+    if ((token ?? '').trim().isNotEmpty) {
+      unawaited(
+        context
+            .read<AppNotificationProvider>()
+            .loadPersisted(token: token!.trim()),
+      );
+    }
+
     showAppNotificationCenterSheet(
       context: context,
       onNotificationTap: _handleNotificationTap,
@@ -145,7 +154,8 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
   }
 
   void _handleNotificationTap(AppNotificationItem notification) {
-    context.read<AppNotificationProvider>().markAsRead(notification.id);
+    final token = context.read<AuthProvider>().token;
+    context.read<AppNotificationProvider>().markAsRead(notification.id, token);
     Navigator.of(context).maybePop();
 
     if (notification.routeKey == 'guardian.documents' ||
@@ -225,12 +235,17 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
 
   Future<void> _refreshGuardianPortal() async {
     final auth = context.read<AuthProvider>();
+    final notificationProvider = context.read<AppNotificationProvider>();
+    final token = auth.token;
     final preferredStudentId = (_selectedStudentId ??
             auth.guardianSelectedStudentId ??
             auth.guardianSession?.defaultStudent?.id)
         ?.trim();
 
     await _loadGuardianPortalData(studentId: preferredStudentId);
+    if ((token ?? '').trim().isNotEmpty) {
+      await notificationProvider.loadPersisted(token: token!.trim());
+    }
     await _loadGuardianInvoices(studentId: _selectedStudentId);
     await _loadGuardianDocuments(studentId: _selectedStudentId);
   }

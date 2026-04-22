@@ -1,5 +1,6 @@
 import 'package:academyhub_mobile/model/app_notification_model.dart';
 import 'package:academyhub_mobile/providers/app_notification_provider.dart';
+import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -52,12 +53,13 @@ class _AppNotificationCenterSheetState
       child: Consumer<AppNotificationProvider>(
         builder: (context, provider, _) {
           final notifications = provider.items;
+          final token = context.read<AuthProvider>().token;
           if (notifications.isNotEmpty && provider.unreadCount > 0) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!mounted) return;
               context
                   .read<AppNotificationProvider>()
-                  .markDisplayedAsRead(notifications);
+                  .markDisplayedAsRead(notifications, token);
             });
           }
 
@@ -108,7 +110,7 @@ class _AppNotificationCenterSheetState
                       ),
                       if (provider.unreadCount > 0)
                         TextButton(
-                          onPressed: provider.markAllAsRead,
+                          onPressed: () => provider.markAllAsRead(token),
                           child: const Text('Marcar lidas'),
                         ),
                     ],
