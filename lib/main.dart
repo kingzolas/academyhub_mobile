@@ -235,7 +235,13 @@ class MyApp extends StatelessWidget {
           path: '/matricula-web/:schoolId',
           builder: (context, state) {
             final schoolId = state.pathParameters['schoolId'];
-            return PublicRegistrationScreen(schoolId: schoolId!);
+            final onlyMinors =
+                state.uri.queryParameters['onlyMinors']?.toLowerCase() ==
+                    'true';
+            return PublicRegistrationScreen(
+              schoolId: schoolId!,
+              onlyMinors: onlyMinors,
+            );
           },
         ),
         GoRoute(

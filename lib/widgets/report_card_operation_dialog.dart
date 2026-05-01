@@ -12,6 +12,8 @@ Future<bool?> showReportCardOperationDialog({
   required String loadingMessage,
   required String successTitle,
   required String successMessage,
+  String errorTitle = 'Falha ao salvar',
+  String errorFallbackMessage = 'Não foi possível concluir a operação.',
   String? loadingDetail,
   Duration minimumLoadingDuration = const Duration(milliseconds: 900),
   Duration successVisibleDuration = const Duration(milliseconds: 1100),
@@ -20,7 +22,7 @@ Future<bool?> showReportCardOperationDialog({
     context: context,
     useRootNavigator: true,
     barrierDismissible: false,
-    barrierColor: Colors.black.withOpacity(0.72),
+    barrierColor: Colors.black.withValues(alpha: 0.72),
     builder: (_) => _ReportCardOperationDialog(
       operation: operation,
       loadingTitle: loadingTitle,
@@ -28,6 +30,8 @@ Future<bool?> showReportCardOperationDialog({
       loadingDetail: loadingDetail,
       successTitle: successTitle,
       successMessage: successMessage,
+      errorTitle: errorTitle,
+      errorFallbackMessage: errorFallbackMessage,
       minimumLoadingDuration: minimumLoadingDuration,
       successVisibleDuration: successVisibleDuration,
     ),
@@ -41,6 +45,8 @@ class _ReportCardOperationDialog extends StatefulWidget {
   final String? loadingDetail;
   final String successTitle;
   final String successMessage;
+  final String errorTitle;
+  final String errorFallbackMessage;
   final Duration minimumLoadingDuration;
   final Duration successVisibleDuration;
 
@@ -50,6 +56,8 @@ class _ReportCardOperationDialog extends StatefulWidget {
     required this.loadingMessage,
     required this.successTitle,
     required this.successMessage,
+    required this.errorTitle,
+    required this.errorFallbackMessage,
     required this.minimumLoadingDuration,
     required this.successVisibleDuration,
     this.loadingDetail,
@@ -163,7 +171,7 @@ class _ReportCardOperationDialogState extends State<_ReportCardOperationDialog>
             border: Border.all(color: palette.border),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(isDark ? 0.45 : 0.12),
+                color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.12),
                 blurRadius: 26,
                 offset: const Offset(0, 14),
               ),
@@ -225,8 +233,10 @@ class _ReportCardOperationDialogState extends State<_ReportCardOperationDialog>
           key: key,
           palette: palette,
           indicatorColor: indicatorColor,
-          title: 'Falha ao salvar',
-          message: _errorMessage ?? 'Não foi possível concluir a operação.',
+          title: widget.errorTitle,
+          message: (_errorMessage != null && _errorMessage!.trim().isNotEmpty)
+              ? _errorMessage!
+              : widget.errorFallbackMessage,
         );
     }
   }
@@ -550,13 +560,13 @@ class _StatusIcon extends StatelessWidget {
               color: palette.iconSurface,
               boxShadow: [
                 BoxShadow(
-                  color: color.withOpacity(glow),
+                  color: color.withValues(alpha: glow),
                   blurRadius: 22,
                   spreadRadius: 2,
                 ),
               ],
               border: Border.all(
-                color: color.withOpacity(0.24),
+                color: color.withValues(alpha: 0.24),
                 width: 1.2,
               ),
             ),
@@ -567,7 +577,7 @@ class _StatusIcon extends StatelessWidget {
                 child: CircularProgressIndicator(
                   strokeWidth: 3.2,
                   color: color,
-                  backgroundColor: color.withOpacity(0.12),
+                  backgroundColor: color.withValues(alpha: 0.12),
                 ),
               ),
             ),
@@ -597,13 +607,13 @@ class _SuccessIcon extends StatelessWidget {
         color: palette.successSurface,
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.20),
+            color: color.withValues(alpha: 0.20),
             blurRadius: 22,
             spreadRadius: 2,
           ),
         ],
         border: Border.all(
-          color: color.withOpacity(0.22),
+          color: color.withValues(alpha: 0.22),
           width: 1.2,
         ),
       ),
@@ -635,13 +645,13 @@ class _ErrorIcon extends StatelessWidget {
         color: palette.errorSurface,
         boxShadow: [
           BoxShadow(
-            color: color.withOpacity(0.18),
+            color: color.withValues(alpha: 0.18),
             blurRadius: 22,
             spreadRadius: 2,
           ),
         ],
         border: Border.all(
-          color: color.withOpacity(0.22),
+          color: color.withValues(alpha: 0.22),
           width: 1.2,
         ),
       ),
