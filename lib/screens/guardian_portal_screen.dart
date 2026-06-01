@@ -14,6 +14,7 @@ import 'package:academyhub_mobile/screens/guardian_attendance_screen.dart';
 import 'package:academyhub_mobile/screens/guardian_documents_screen.dart';
 import 'package:academyhub_mobile/screens/guardian_schedule_screen.dart';
 import 'package:academyhub_mobile/services/guardian_auth_service.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:academyhub_mobile/services/websocket.dart';
 import 'package:academyhub_mobile/widgets/app_notification_center_sheet.dart';
 import 'package:academyhub_mobile/widgets/custom_bottom_menu.dart';
@@ -233,35 +234,49 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     }
   }
 
-  Future<void> _refreshGuardianPortal() async {
-    final auth = context.read<AuthProvider>();
-    final notificationProvider = context.read<AppNotificationProvider>();
-    final token = auth.token;
-    final preferredStudentId = (_selectedStudentId ??
-            auth.guardianSelectedStudentId ??
-            auth.guardianSession?.defaultStudent?.id)
-        ?.trim();
+  Future<void> _expireGuardianSession([Object? error]) async {
+    if (!mounted) return;
+    await context.read<AuthProvider>().expireGuardianSession(
+          context,
+          reason: error?.toString(),
+        );
+  }
 
-    await _loadGuardianPortalData(studentId: preferredStudentId);
-    if ((token ?? '').trim().isNotEmpty) {
-      await notificationProvider.loadPersisted(token: token!.trim());
+  Future<void> _refreshGuardianPortal() async {
+    try {
+      final auth = context.read<AuthProvider>();
+      final notificationProvider = context.read<AppNotificationProvider>();
+      final token = auth.token;
+      final preferredStudentId = (_selectedStudentId ??
+              auth.guardianSelectedStudentId ??
+              auth.guardianSession?.defaultStudent?.id)
+          ?.trim();
+
+      await _loadGuardianPortalData(studentId: preferredStudentId);
+      if (!mounted || !context.read<AuthProvider>().isGuardian) return;
+
+      if ((token ?? '').trim().isNotEmpty) {
+        await notificationProvider.loadPersisted(token: token!.trim());
+      }
+      await _loadGuardianInvoices(studentId: _selectedStudentId);
+      await _loadGuardianDocuments(studentId: _selectedStudentId);
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
     }
-    await _loadGuardianInvoices(studentId: _selectedStudentId);
-    await _loadGuardianDocuments(studentId: _selectedStudentId);
   }
 
   Future<void> _loadGuardianPortalData({String? studentId}) async {
     final auth = context.read<AuthProvider>();
     final token = auth.token;
 
-    if (token == null || token.trim().isEmpty) {
-      if (!mounted) return;
-      setState(() {
-        _portalHome = null;
-        _portalError =
-            'Sua sessão expirou. Entre novamente para acompanhar o aluno.';
-        _isPortalLoading = false;
-      });
+    final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await _expireGuardianSession(
+        const GuardianSessionExpiredException(
+          message: 'Sessao do responsavel ausente.',
+          code: 'guardian_token_missing',
+        ),
+      );
       return;
     }
 
@@ -274,7 +289,7 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
 
     try {
       final result = await _guardianAuthService.getGuardianPortalHome(
-        token: token,
+        token: token!.trim(),
         studentId: studentId,
       );
       final preferredStudentId =
@@ -297,6 +312,8 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
 
       await auth.setGuardianSelectedStudentId(resolvedStudentId);
       _connectGuardianWebSocket();
+    } on GuardianSessionExpiredException {
+      rethrow;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -310,17 +327,25 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     final auth = context.read<AuthProvider>();
     final invoices = context.read<InvoiceProvider>();
 
-    if (auth.token == null || auth.token!.isEmpty) {
-      invoices.setError(
-        'Sua sessão expirou. Entre novamente para visualizar os boletos.',
+    final hasGuardianToken = (auth.token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await _expireGuardianSession(
+        const GuardianSessionExpiredException(
+          message: 'Sessao do responsavel ausente.',
+          code: 'guardian_token_missing',
+        ),
       );
       return;
     }
 
-    await invoices.fetchGuardianInvoices(
-      token: auth.token!,
-      studentId: studentId,
-    );
+    try {
+      await invoices.fetchGuardianInvoices(
+        token: auth.token!,
+        studentId: studentId,
+      );
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
+    }
   }
 
   Future<void> _loadGuardianDocuments({String? studentId}) async {
@@ -329,8 +354,15 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
     final normalizedStudentId =
         (studentId ?? _selectedStudent?.id ?? '').trim();
 
-    if (auth.token == null || auth.token!.isEmpty) {
+    final hasGuardianToken = (auth.token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
       documents.clear();
+      await _expireGuardianSession(
+        const GuardianSessionExpiredException(
+          message: 'Sessao do responsavel ausente.',
+          code: 'guardian_token_missing',
+        ),
+      );
       return;
     }
 
@@ -339,11 +371,15 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       return;
     }
 
-    await documents.load(
-      token: auth.token!,
-      studentId: normalizedStudentId,
-      silent: true,
-    );
+    try {
+      await documents.load(
+        token: auth.token!,
+        studentId: normalizedStudentId,
+        silent: true,
+      );
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
+    }
   }
 
   void _onTabTapped(int index) {
@@ -379,9 +415,13 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
         return;
       }
 
-      if (auth.token == null || auth.token!.isEmpty) {
-        _showFeedback(
-          'Sua sessão expirou. Entre novamente para baixar o boleto.',
+      final hasGuardianToken = (auth.token ?? '').trim().isNotEmpty;
+      if (!hasGuardianToken) {
+        await _expireGuardianSession(
+          const GuardianSessionExpiredException(
+            message: 'Sessao do responsavel ausente.',
+            code: 'guardian_token_missing',
+          ),
         );
         return;
       }
@@ -396,6 +436,8 @@ class _GuardianPortalScreenState extends State<GuardianPortalScreen> {
       if (invoices.error != null) {
         _showFeedback(invoices.error!);
       }
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
     } catch (_) {
       if (!mounted) return;
       _showFeedback('Não foi possível abrir ou baixar o boleto.');

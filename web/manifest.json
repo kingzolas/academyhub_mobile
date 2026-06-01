@@ -1,11 +1,11 @@
 {
-    "name": "academyhub_mobile",
-    "short_name": "academyhub_mobile",
+    "name": "Academy Hub",
+    "short_name": "Academy Hub",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FFFFFF",
+    "theme_color": "#1E1E1E",
+    "description": "Sistema de gest\u00e3o escolar",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

@@ -1,6 +1,7 @@
 import 'package:academyhub_mobile/model/guardian_auth_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/services/guardian_auth_service.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -38,12 +39,12 @@ class _GuardianActivitiesScreenState extends State<GuardianActivitiesScreen> {
   Future<void> _load() async {
     final token = context.read<AuthProvider>().token;
 
-    if (token == null || token.trim().isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _error =
-            'Sua sessão expirou. Entre novamente para acompanhar as atividades.';
-      });
+    final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await context.read<AuthProvider>().expireGuardianSession(
+            context,
+            reason: 'guardian_token_missing',
+          );
       return;
     }
 
@@ -54,7 +55,7 @@ class _GuardianActivitiesScreenState extends State<GuardianActivitiesScreen> {
 
     try {
       final result = await _service.getGuardianActivities(
-        token: token,
+        token: token!.trim(),
         studentId: widget.student.id,
       );
 
@@ -63,6 +64,12 @@ class _GuardianActivitiesScreenState extends State<GuardianActivitiesScreen> {
         _data = result;
         _isLoading = false;
       });
+    } on GuardianSessionExpiredException catch (error) {
+      if (!mounted) return;
+      await context.read<AuthProvider>().expireGuardianSession(
+            context,
+            reason: error.message,
+          );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -172,8 +179,7 @@ class _GuardianActivitiesScreenState extends State<GuardianActivitiesScreen> {
       case 1:
         return items.where((item) => item.isDelivered).toList();
       case 2:
-        return [...items]
-          ..sort((left, right) {
+        return [...items]..sort((left, right) {
             final leftDate = left.dueDate ?? left.assignedAt ?? DateTime(2000);
             final rightDate =
                 right.dueDate ?? right.assignedAt ?? DateTime(2000);
@@ -181,9 +187,7 @@ class _GuardianActivitiesScreenState extends State<GuardianActivitiesScreen> {
           });
       case 0:
       default:
-        return items
-            .where((item) => item.isPending || item.isOverdue)
-            .toList();
+        return items.where((item) => item.isPending || item.isOverdue).toList();
     }
   }
 }

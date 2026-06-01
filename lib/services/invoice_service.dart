@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:academyhub_mobile/model/invoice_model.dart';
 import 'package:http/http.dart' as http;
 import 'package:academyhub_mobile/config/api_config.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 
 class InvoiceService {
   final String _baseUrl = ApiConfig.apiUrl;
@@ -87,10 +88,20 @@ class InvoiceService {
       return GuardianInvoicesResponse.fromJson(data);
     } else {
       String message = 'Falha ao buscar os boletos do responsável.';
+      Map<String, dynamic> errorBody = const {};
       try {
-        final errorBody = jsonDecode(response.body);
+        errorBody =
+            jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
         message = (errorBody['message'] ?? message).toString();
       } catch (_) {}
+      final sessionException = guardianSessionExceptionFromResponse(
+        statusCode: response.statusCode,
+        payload: errorBody,
+        fallbackMessage: message,
+      );
+      if (sessionException != null) {
+        throw sessionException;
+      }
       throw Exception(message);
     }
   }
@@ -233,10 +244,20 @@ class InvoiceService {
       return response.bodyBytes;
     } else {
       String msg = 'Erro ao gerar o PDF do boleto.';
+      Map<String, dynamic> errorBody = const {};
       try {
-        final err = jsonDecode(response.body);
-        msg = (err['message'] ?? msg).toString();
+        errorBody =
+            jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+        msg = (errorBody['message'] ?? msg).toString();
       } catch (_) {}
+      final sessionException = guardianSessionExceptionFromResponse(
+        statusCode: response.statusCode,
+        payload: errorBody,
+        fallbackMessage: msg,
+      );
+      if (sessionException != null) {
+        throw sessionException;
+      }
       throw Exception(msg);
     }
   }

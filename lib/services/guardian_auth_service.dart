@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/model/guardian_auth_model.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:http/http.dart' as http;
 
 class GuardianAuthService {
@@ -21,12 +22,18 @@ class GuardianAuthService {
         },
       );
 
-      final responseData =
-          jsonDecode(response.body.isEmpty ? '{}' : response.body)
-              as Map<String, dynamic>;
+      final responseData = _decodeResponse(response);
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return responseData;
+      }
+
+      final sessionException = guardianSessionExceptionFromResponse(
+        statusCode: response.statusCode,
+        payload: responseData,
+      );
+      if (sessionException != null) {
+        throw sessionException;
       }
 
       throw Exception(
@@ -263,13 +270,31 @@ class GuardianAuthService {
     }
 
     String message = 'Não foi possível gerar o PDF do boleto.';
+    Map<String, dynamic> responseData = const {};
     try {
-      final responseData =
-          jsonDecode(response.body.isEmpty ? '{}' : response.body)
-              as Map<String, dynamic>;
+      responseData = _decodeResponse(response);
       message = (responseData['message'] ?? message).toString();
     } catch (_) {}
 
+    final sessionException = guardianSessionExceptionFromResponse(
+      statusCode: response.statusCode,
+      payload: responseData,
+      fallbackMessage: message,
+    );
+    if (sessionException != null) {
+      throw sessionException;
+    }
+
     throw Exception(message);
+  }
+
+  Map<String, dynamic> _decodeResponse(http.Response response) {
+    final body = utf8.decode(response.bodyBytes);
+    if (body.trim().isEmpty) return <String, dynamic>{};
+
+    final decoded = jsonDecode(body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    return {'data': decoded};
   }
 }

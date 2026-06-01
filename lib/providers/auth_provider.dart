@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/screens/loginPage.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
@@ -23,9 +24,9 @@ import 'package:academyhub_mobile/providers/user_provider.dart';
 import 'package:academyhub_mobile/providers/report_card_provider.dart';
 import 'package:academyhub_mobile/providers/app_notification_provider.dart';
 import 'package:academyhub_mobile/providers/guardian_official_documents_provider.dart';
+import '../services/navigation_service.dart';
 
 // [NOVO] Imports para a navegação global forçada
-import '../services/navigation_service.dart';
 // import '../screens/auth/login_screen.dart'; // Ajuste este caminho para a sua tela de Login real
 
 class AuthProvider with ChangeNotifier {
@@ -45,6 +46,7 @@ class AuthProvider with ChangeNotifier {
   String? _token;
   GuardianSession? _guardianSession;
   String? _sessionPrincipal;
+  bool _isExpiringGuardianSession = false;
 
   User? get user => _user;
   String? get token => _token;
@@ -311,8 +313,7 @@ class AuthProvider with ChangeNotifier {
   // =================================================================
   Future<void> logout([BuildContext? context]) async {
     // 1. Tenta limpar o cache dos providers usando o context passado ou o global
-    final activeContext =
-        context ?? NavigationService.navigatorKey.currentContext;
+    final activeContext = context;
 
     if (activeContext != null && activeContext.mounted) {
       clearAppCache(activeContext);
@@ -343,7 +344,12 @@ class AuthProvider with ChangeNotifier {
     // 4. Avisa a UI para redesenhar variáveis que dependam de autenticação
     notifyListeners();
 
-    // 5. O PULO DO GATO: Força o redirecionamento global e apaga o histórico de navegação
+    if (context != null && context.mounted) {
+      context.go('/');
+      return;
+    }
+
+    // 5. Fallback legado para chamadas que ainda não recebem BuildContext.
     if (NavigationService.navigatorKey.currentState != null) {
       debugPrint('🚪 [AuthProvider] Redirecionando para a tela de Login...');
       NavigationService.navigatorKey.currentState!.pushAndRemoveUntil(
@@ -354,6 +360,50 @@ class AuthProvider with ChangeNotifier {
     } else {
       debugPrint(
           '❌ [AuthProvider] navigatorKey.currentState está NULO. Não foi possível redirecionar.');
+    }
+  }
+
+  Future<void> expireGuardianSession(
+    BuildContext? context, {
+    String? reason,
+  }) async {
+    final isCurrentGuardianSession =
+        _sessionPrincipal == 'guardian' || _guardianSession != null;
+
+    if (!isCurrentGuardianSession || _isExpiringGuardianSession) {
+      return;
+    }
+
+    _isExpiringGuardianSession = true;
+    try {
+      debugPrint(
+          '[AuthProvider] Encerrando sessao de responsavel invalida: ${reason ?? 'sem detalhe'}');
+
+      if (context != null && context.mounted) {
+        clearAppCache(context);
+      }
+
+      _user = null;
+      _token = null;
+      _guardianSession = null;
+      _sessionPrincipal = null;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_authTokenKey);
+      await prefs.remove(_userDataKey);
+      await prefs.remove(_guardianSessionDataKey);
+      await prefs.remove(_studentTokenKey);
+      await prefs.remove(_studentDataKey);
+      await prefs.remove(_userRoleKey);
+      await prefs.remove(_sessionPrincipalKey);
+
+      if (context != null && context.mounted) {
+        context.go('/?mode=guardian');
+      }
+
+      notifyListeners();
+    } finally {
+      _isExpiringGuardianSession = false;
     }
   }
 

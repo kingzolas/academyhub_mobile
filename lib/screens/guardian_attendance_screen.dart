@@ -5,6 +5,7 @@ import 'package:academyhub_mobile/model/guardian_auth_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/services/guardian_absence_justification_request_service.dart';
 import 'package:academyhub_mobile/services/guardian_auth_service.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
@@ -81,17 +82,23 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
     }
   }
 
+  Future<void> _expireGuardianSession([Object? error]) async {
+    if (!mounted) return;
+    await context.read<AuthProvider>().expireGuardianSession(
+          context,
+          reason: error?.toString(),
+        );
+  }
+
   Future<void> _load() async {
     final token = context.read<AuthProvider>().token;
 
-    if (token == null || token.trim().isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _error =
-            'Sua sessão expirou. Entre novamente para acompanhar a frequência.';
-      });
+    final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await _expireGuardianSession('guardian_token_missing');
       return;
     }
+    final guardianToken = token!.trim();
 
     setState(() {
       _isLoading = true;
@@ -103,11 +110,11 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
     try {
       final results = await Future.wait<dynamic>([
         _service.getGuardianAttendance(
-          token: token,
+          token: guardianToken,
           studentId: widget.student.id,
         ),
         _requestService.getRequests(
-          token: token,
+          token: guardianToken,
           studentId: widget.student.id,
         ),
       ]);
@@ -121,6 +128,8 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
         _isRequestsLoading = false;
         _requestError = null;
       });
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -133,7 +142,10 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
 
   Future<void> _loadRequestsOnly() async {
     final token = context.read<AuthProvider>().token;
-    if (token == null || token.trim().isEmpty) return;
+    if (token == null || token.trim().isEmpty) {
+      await _expireGuardianSession('guardian_token_missing');
+      return;
+    }
 
     setState(() {
       _isRequestsLoading = true;
@@ -142,7 +154,7 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
 
     try {
       final result = await _requestService.getRequests(
-        token: token,
+        token: token.trim(),
         studentId: widget.student.id,
       );
       if (!mounted) return;
@@ -150,6 +162,8 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
         _requests = result;
         _isRequestsLoading = false;
       });
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -227,9 +241,9 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
 
             Future<void> submit() async {
               final token = context.read<AuthProvider>().token;
-              if (token == null || token.trim().isEmpty) {
-                setSheetState(() => localError =
-                    'Sua sessão expirou. Entre novamente para solicitar o abono.');
+              final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+              if (!hasGuardianToken) {
+                await _expireGuardianSession('guardian_token_missing');
                 return;
               }
 
@@ -266,7 +280,7 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
               try {
                 if (complementFor == null) {
                   await _requestService.createRequest(
-                    token: token,
+                    token: token!.trim(),
                     studentId: widget.student.id,
                     requestedStartDate: selectedRange!.start,
                     requestedEndDate: selectedRange!.end,
@@ -278,7 +292,7 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
                   );
                 } else {
                   await _requestService.complementRequest(
-                    token: token,
+                    token: token!.trim(),
                     requestId: complementFor.id,
                     notes: notes,
                     attachmentBytes: selectedFileBytes,
@@ -295,6 +309,8 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
                       ? 'Solicitação enviada para análise da escola.'
                       : 'Complemento enviado para a escola.',
                 );
+              } on GuardianSessionExpiredException catch (error) {
+                await _expireGuardianSession(error);
               } catch (e) {
                 setSheetState(() {
                   localError = e.toString().replaceFirst('Exception: ', '');
@@ -498,16 +514,21 @@ class _GuardianAttendanceScreenState extends State<GuardianAttendanceScreen> {
     GuardianAbsenceJustificationRequest request,
   ) async {
     final token = context.read<AuthProvider>().token;
-    if (token == null || token.trim().isEmpty) return;
+    if (token == null || token.trim().isEmpty) {
+      await _expireGuardianSession('guardian_token_missing');
+      return;
+    }
 
     try {
       await _requestService.cancelRequest(
-        token: token,
+        token: token.trim(),
         requestId: request.id,
         reason: 'Cancelado pelo responsável no aplicativo.',
       );
       await _loadRequestsOnly();
       _showFeedback('Solicitação cancelada.');
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
     } catch (e) {
       _showFeedback(e.toString().replaceFirst('Exception: ', ''));
     }

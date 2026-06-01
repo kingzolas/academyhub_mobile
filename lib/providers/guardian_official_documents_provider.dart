@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:academyhub_mobile/model/guardian_official_document_model.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:academyhub_mobile/services/guardian_official_document_service.dart';
 import 'package:flutter/material.dart';
 
@@ -142,6 +143,8 @@ class GuardianOfficialDocumentsProvider extends ChangeNotifier {
         ..sort(_sortRequests);
       _documents = (results[2] as List<GuardianOfficialDocument>).toList()
         ..sort(_sortDocuments);
+    } on GuardianSessionExpiredException {
+      rethrow;
     } catch (e) {
       _error = _friendlyError(e);
     } finally {
@@ -175,6 +178,8 @@ class GuardianOfficialDocumentsProvider extends ChangeNotifier {
 
       await load(token: token, studentId: studentId, silent: true);
       return true;
+    } on GuardianSessionExpiredException {
+      rethrow;
     } catch (e) {
       _error = _friendlyError(e);
       notifyListeners();
@@ -201,6 +206,8 @@ class GuardianOfficialDocumentsProvider extends ChangeNotifier {
       );
       await _service.markDownloaded(token: token, documentId: document.id);
       return bytes;
+    } on GuardianSessionExpiredException {
+      rethrow;
     } catch (e) {
       _error = _friendlyError(e);
       return null;

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/model/guardian_official_document_model.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:http/http.dart' as http;
 
 class GuardianOfficialDocumentService {
@@ -46,6 +47,8 @@ class GuardianOfficialDocumentService {
       return items.isEmpty
           ? GuardianOfficialDocumentCatalogItem.defaults
           : items;
+    } on GuardianSessionExpiredException {
+      rethrow;
     } catch (_) {
       return GuardianOfficialDocumentCatalogItem.defaults;
     }
@@ -174,9 +177,19 @@ class GuardianOfficialDocumentService {
           return response.bodyBytes;
         }
 
+        final sessionException = guardianSessionExceptionFromResponse(
+          statusCode: response.statusCode,
+          payload: _safeDecodeJson(response),
+        );
+        if (sessionException != null) {
+          throw sessionException;
+        }
+
         if (response.statusCode != 404 && response.statusCode != 405) {
           throw Exception(_errorMessage(response));
         }
+      } on GuardianSessionExpiredException {
+        rethrow;
       } catch (e) {
         lastError = e;
       }
@@ -189,6 +202,13 @@ class GuardianOfficialDocumentService {
       );
       if (response.statusCode >= 200 && response.statusCode < 300) {
         return response.bodyBytes;
+      }
+      final sessionException = guardianSessionExceptionFromResponse(
+        statusCode: response.statusCode,
+        payload: _safeDecodeJson(response),
+      );
+      if (sessionException != null) {
+        throw sessionException;
       }
       throw Exception(_errorMessage(response));
     }
@@ -220,10 +240,20 @@ class GuardianOfficialDocumentService {
         if (response.statusCode >= 200 && response.statusCode < 300) {
           return;
         }
+        final sessionException = guardianSessionExceptionFromResponse(
+          statusCode: response.statusCode,
+          payload: _safeDecodeJson(response),
+        );
+        if (sessionException != null) {
+          throw sessionException;
+        }
+
         if (response.statusCode == 404 || response.statusCode == 405) {
           continue;
         }
         return;
+      } on GuardianSessionExpiredException {
+        rethrow;
       } catch (_) {
         return;
       }
@@ -256,6 +286,14 @@ class GuardianOfficialDocumentService {
           return _decodeJson(response);
         }
 
+        final sessionException = guardianSessionExceptionFromResponse(
+          statusCode: response.statusCode,
+          payload: _safeDecodeJson(response),
+        );
+        if (sessionException != null) {
+          throw sessionException;
+        }
+
         if (response.statusCode == 404 || response.statusCode == 405) {
           lastError = Exception(_errorMessage(response));
           continue;
@@ -279,6 +317,14 @@ class GuardianOfficialDocumentService {
   dynamic _decodeJson(http.Response response) {
     if (response.body.trim().isEmpty) return <String, dynamic>{};
     return jsonDecode(utf8.decode(response.bodyBytes));
+  }
+
+  dynamic _safeDecodeJson(http.Response response) {
+    try {
+      return _decodeJson(response);
+    } catch (_) {
+      return <String, dynamic>{};
+    }
   }
 
   String _errorMessage(http.Response response) {

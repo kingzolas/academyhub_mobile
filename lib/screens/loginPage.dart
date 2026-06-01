@@ -13,7 +13,12 @@ import 'package:provider/provider.dart';
 enum _LoginMode { standard, guardian }
 
 class Loginpage extends StatefulWidget {
-  const Loginpage({super.key});
+  final bool startInGuardianMode;
+
+  const Loginpage({
+    super.key,
+    this.startInGuardianMode = false,
+  });
 
   @override
   State<Loginpage> createState() => _LoginpageState();
@@ -43,6 +48,8 @@ class _LoginpageState extends State<Loginpage> {
   @override
   void initState() {
     super.initState();
+    _loginMode =
+        widget.startInGuardianMode ? _LoginMode.guardian : _LoginMode.standard;
     SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.dark,

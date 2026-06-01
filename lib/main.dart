@@ -316,7 +316,10 @@ class MyApp extends StatelessWidget {
         ),
         GoRoute(
           path: '/',
-          builder: (context, state) => const AuthWrapper(),
+          builder: (context, state) => AuthWrapper(
+            startInGuardianMode:
+                state.uri.queryParameters['mode'] == 'guardian',
+          ),
         ),
       ],
     );
@@ -357,7 +360,12 @@ class MyApp extends StatelessWidget {
 }
 
 class AuthWrapper extends StatelessWidget {
-  const AuthWrapper({super.key});
+  final bool startInGuardianMode;
+
+  const AuthWrapper({
+    super.key,
+    this.startInGuardianMode = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -375,7 +383,7 @@ class AuthWrapper extends StatelessWidget {
             if (authResultSnapshot.connectionState == ConnectionState.waiting) {
               return const SplashScreen();
             }
-            return const Loginpage();
+            return Loginpage(startInGuardianMode: startInGuardianMode);
           },
         );
       },

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:academyhub_mobile/model/invoice_model.dart';
 import 'package:flutter/material.dart';
 import 'package:academyhub_mobile/services/invoice_service.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:printing/printing.dart';
 
 class InvoiceProvider extends ChangeNotifier {
@@ -90,6 +91,8 @@ class InvoiceProvider extends ChangeNotifier {
       );
       _guardianInvoices = response.invoices;
       _guardianFinancialScoreContext = response.financialScoreContext;
+    } on GuardianSessionExpiredException {
+      rethrow;
     } catch (e) {
       _guardianFinancialScoreContext = null;
       setError(e.toString().replaceAll('Exception: ', ''));
@@ -294,6 +297,8 @@ class InvoiceProvider extends ChangeNotifier {
         name:
             'Boleto_Responsavel_${DateTime.now().day}_${DateTime.now().month}.pdf',
       );
+    } on GuardianSessionExpiredException {
+      rethrow;
     } catch (e) {
       final errorMsg = e.toString().replaceAll('Exception: ', '');
       setError(errorMsg);

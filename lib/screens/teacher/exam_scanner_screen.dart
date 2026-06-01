@@ -1,7 +1,5 @@
 // lib/screens/teacher/exam_scanner_screen.dart
 
-import 'dart:typed_data';
-
 import 'package:academyhub_mobile/model/exam_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
@@ -18,6 +16,9 @@ import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
+
+import 'embedded_web_camera_stub.dart'
+    if (dart.library.html) 'embedded_web_camera_web.dart';
 
 enum ScannerState { scanningQR, takingPhoto, processing }
 
@@ -87,6 +88,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   CameraController? _cameraController;
   List<CameraDescription>? _cameras;
+  late final EmbeddedWebCameraController _webCameraController;
 
   ScannerState _currentState = ScannerState.scanningQR;
 
@@ -97,25 +99,78 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   bool _isCapturingPhoto = false;
   Uint8List? _webPickedPreviewBytes;
+  bool _hasStartedQrScanner = false;
+  bool _isStartingQrScanner = false;
+  String? _qrScannerErrorMessage;
+  DateTime? _lastSheetVisualLogAt;
 
   bool get _isWebCameraFlow => kIsWeb;
+  bool get _usesWebDomOverlayFlow =>
+      kIsWeb && _webCameraController.shouldUseDomOverlay;
 
   @override
   void initState() {
     super.initState();
-    _startScannerSafely();
-  }
+    _webCameraController = EmbeddedWebCameraController()
+      ..addListener(_onWebCameraChanged);
 
-  Future<void> _startScannerSafely() async {
-    try {
-      await _scannerController.start();
-    } catch (e) {
-      debugPrint("Erro ao iniciar o scanner de QR: $e");
+    if (!kIsWeb) {
+      _startScannerSafely();
+    } else {
+      debugPrint(
+        '[ExamScanner] Flutter Web detectado. A camera sera iniciada por acao do usuario.',
+      );
     }
   }
 
+  Future<void> _startScannerSafely() async {
+    if (_isStartingQrScanner) return;
+
+    if (mounted) {
+      setState(() {
+        _isStartingQrScanner = true;
+        _qrScannerErrorMessage = null;
+      });
+    }
+
+    try {
+      debugPrint(
+        '[ExamScanner] Iniciando scanner QR. kIsWeb=$kIsWeb',
+      );
+      await _scannerController.start();
+      debugPrint('[ExamScanner] Scanner QR iniciado com sucesso.');
+      if (mounted) {
+        setState(() {
+          _hasStartedQrScanner = true;
+        });
+      }
+    } catch (e) {
+      debugPrint("Erro ao iniciar o scanner de QR: $e");
+      if (mounted) {
+        setState(() {
+          _qrScannerErrorMessage = kIsWeb
+              ? 'Nao foi possivel acessar a camera. Verifique a permissao da camera no Safari/iPhone e use HTTPS.'
+              : 'Nao foi possivel acessar a camera.';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStartingQrScanner = false;
+        });
+      }
+    }
+  }
+
+  void _onWebCameraChanged() {
+    if (mounted) setState(() {});
+  }
+
   Future<void> _initPhotoCamera() async {
-    if (kIsWeb) return;
+    if (kIsWeb) {
+      await _webCameraController.start();
+      return;
+    }
 
     _cameras = await availableCameras();
     if (_cameras != null && _cameras!.isNotEmpty) {
@@ -143,6 +198,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     await _cameraController?.dispose();
     _cameraController = null;
+    await _webCameraController.stop();
     _webPickedPreviewBytes = null;
     _isCapturingPhoto = false;
 
@@ -154,7 +210,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       });
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _startScannerSafely();
+        if (!kIsWeb || _hasStartedQrScanner) {
+          _startScannerSafely();
+        }
       });
     }
   }
@@ -163,6 +221,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   void dispose() {
     _scannerController.dispose();
     _cameraController?.dispose();
+    _webCameraController
+      ..removeListener(_onWebCameraChanged)
+      ..dispose();
     super.dispose();
   }
 
@@ -176,8 +237,10 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     final String? qrCodeUuid = barcodes.first.rawValue;
     if (qrCodeUuid == null || qrCodeUuid.isEmpty) return;
 
+    debugPrint('[ExamScanner] QR: detectado $qrCodeUuid');
     setState(() => _currentState = ScannerState.processing);
     await _scannerController.stop();
+    debugPrint('[ExamScanner] QR: scanner pausado/parado.');
 
     if (!mounted) return;
     final token = Provider.of<AuthProvider>(context, listen: false).token;
@@ -204,10 +267,26 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       return;
     }
 
+    debugPrint('[ExamScanner] QR: aluno identificado.');
+    debugPrint('[ExamScanner] QR: avancando para etapa do gabarito.');
+
     setState(() {
       _scannedQrCodeUuid = qrCodeUuid;
       _scannedSheetData = sheetData;
       _currentState = ScannerState.takingPhoto;
+    });
+
+    debugPrint(
+      '[ExamScanner] Avancou para captura do gabarito. kIsWeb=$kIsWeb',
+    );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _logSheetVisualState(
+        'apos leitura do QR',
+        platformViewActive: kIsWeb && !_usesWebDomOverlayFlow,
+        fullBlackCoverActive: false,
+      );
     });
   }
 
@@ -216,24 +295,38 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     if (_isCapturingPhoto) return;
 
     _isCapturingPhoto = true;
-    setState(() => _currentState = ScannerState.processing);
 
     Uint8List fullImageBytes;
 
     if (_isWebCameraFlow) {
-      final XFile? pickedFile = await _imagePicker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 92,
-      );
-
-      if (pickedFile == null) {
+      if (!_webCameraController.isStarted) {
+        _isCapturingPhoto = false;
         setState(() => _currentState = ScannerState.takingPhoto);
+        await _startPhotoCameraFromUserGesture();
+        return;
+      }
+
+      try {
+        debugPrint(
+          '[ExamScanner] GABARITO: captura solicitada pela camera web embutida.',
+        );
+        fullImageBytes = await _webCameraController.captureFrame();
+      } catch (e) {
+        debugPrint('[ExamScanner] Erro ao capturar frame da camera web: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Nao foi possivel capturar a imagem da camera. Tente novamente.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+          setState(() => _currentState = ScannerState.takingPhoto);
+        }
         _isCapturingPhoto = false;
         return;
       }
-      fullImageBytes = await pickedFile.readAsBytes();
-      _webPickedPreviewBytes = fullImageBytes;
     } else {
       if (_cameraController == null ||
           !_cameraController!.value.isInitialized) {
@@ -244,6 +337,21 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       final XFile photo = await _cameraController!.takePicture();
       fullImageBytes = await photo.readAsBytes();
     }
+
+    await _processCapturedSheetImage(fullImageBytes);
+  }
+
+  Future<void> _processCapturedSheetImage(Uint8List fullImageBytes) async {
+    if (!mounted) {
+      _isCapturingPhoto = false;
+      return;
+    }
+
+    debugPrint(
+      '[ExamScanner] GABARITO: iniciando processamento. '
+      'bytes=${fullImageBytes.length}',
+    );
+    setState(() => _currentState = ScannerState.processing);
 
     final screenSize = MediaQuery.of(context).size;
     final isBubbleSheet =
@@ -256,32 +364,56 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     final studentName = _scannedSheetData?['studentName']?.toUpperCase() ??
         'ALUNO DESCONHECIDO';
 
-    final aiResult = await showScannerOperationDialog<Map<String, dynamic>>(
-      context: context,
-      loadingTitle: 'Analisando Prova',
-      loadingMessage: 'A Inteligência Artificial está calculando a nota...',
-      loadingDetail: 'Aluno(a): $studentName',
-      successTitle: 'Correção Concluída!',
-      successMessage: 'O resultado está pronto para validação.',
-      operation: () async {
-        // 1. Recorta a imagem
-        final Uint8List croppedBytes = await compute(processImageCrop, {
-          'bytes': fullImageBytes,
-          'screenW': screenSize.width,
-          'screenH': screenSize.height,
-          'boxW': boxW,
-          'boxH': boxH,
-        });
+    Map<String, dynamic>? aiResult;
+    try {
+      aiResult = await showScannerOperationDialog<Map<String, dynamic>>(
+        context: context,
+        loadingTitle: 'Analisando Prova',
+        loadingMessage: 'A Inteligência Artificial está calculando a nota...',
+        loadingDetail: 'Aluno(a): $studentName',
+        successTitle: 'Correção Concluída!',
+        successMessage: 'O resultado está pronto para validação.',
+        operation: () async {
+          // 1. Recorta a imagem
+          final Uint8List croppedBytes = await compute(processImageCrop, {
+            'bytes': fullImageBytes,
+            'screenW': screenSize.width,
+            'screenH': screenSize.height,
+            'boxW': boxW,
+            'boxH': boxH,
+          });
 
-        // 2. Envia para a IA
-        return await ExamApiService().processOmrImage(
-          imageBytes: croppedBytes,
-          token: token!,
-          correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
-          examId: _scannedSheetData?['examId'],
-        );
-      },
-    );
+          // 2. Envia para a IA
+          return await ExamApiService().processOmrImage(
+            imageBytes: croppedBytes,
+            token: token!,
+            correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
+            examId: _scannedSheetData?['examId'],
+          );
+        },
+      );
+      debugPrint(
+        '[ExamScanner] GABARITO: processamento finalizado. '
+        'resultado=${aiResult != null}',
+      );
+    } catch (e, stackTrace) {
+      debugPrint('[ExamScanner] GABARITO: erro no processamento: $e');
+      debugPrint('$stackTrace');
+      _isCapturingPhoto = false;
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Nao foi possivel processar o gabarito. Tente capturar novamente.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      setState(() => _currentState = ScannerState.takingPhoto);
+      return;
+    }
 
     _isCapturingPhoto = false;
 
@@ -308,10 +440,100 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     }
   }
 
+  Future<void> _startPhotoCameraFromUserGesture() async {
+    if (!kIsWeb || _webCameraController.isStarting || _isCapturingPhoto) {
+      return;
+    }
+
+    debugPrint('[ExamScanner] GABARITO: botao Iniciar camera clicado.');
+    _webPickedPreviewBytes = null;
+
+    if (_webCameraController.shouldUseDomOverlay) {
+      await _captureSheetWithWebDomOverlay();
+      return;
+    }
+
+    debugPrint('[ExamScanner] GABARITO: usando camera embutida web.');
+
+    try {
+      await _initPhotoCamera();
+    } catch (e) {
+      debugPrint('[ExamScanner] Erro ao iniciar camera web do gabarito: $e');
+    }
+
+    if (!mounted) return;
+
+    final message = _webCameraController.errorMessage;
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _captureSheetWithWebDomOverlay() async {
+    if (_isCapturingPhoto) return;
+
+    _isCapturingPhoto = true;
+    debugPrint('[ExamScanner] GABARITO: abrindo overlay HTML.');
+
+    final isBubbleSheet =
+        _scannedSheetData?['correctionType'] == 'BUBBLE_SHEET';
+    final studentName = _scannedSheetData?['studentName']?.toString() ?? '';
+
+    try {
+      final bytes = await _webCameraController.captureWithDomOverlay(
+        isBubbleSheet: isBubbleSheet,
+        studentName: studentName,
+      );
+
+      if (!mounted) {
+        _isCapturingPhoto = false;
+        return;
+      }
+
+      if (bytes == null) {
+        _isCapturingPhoto = false;
+        setState(() => _currentState = ScannerState.takingPhoto);
+        return;
+      }
+
+      debugPrint(
+        '[ExamScanner] GABARITO: tamanho da imagem capturada: '
+        '${bytes.length} bytes',
+      );
+      debugPrint('[ExamScanner] GABARITO: imagem enviada ao Flutter.');
+      setState(() {
+        _webPickedPreviewBytes = bytes;
+      });
+      debugPrint('[ExamScanner] GABARITO: captura realizada.');
+      await _processCapturedSheetImage(bytes);
+    } catch (e) {
+      debugPrint('[ExamScanner] GABARITO: erro na camera embutida web/iOS: $e');
+      _isCapturingPhoto = false;
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Nao foi possivel abrir a camera embutida. Use Safari em HTTPS ou tente o fallback.',
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      setState(() => _currentState = ScannerState.takingPhoto);
+    }
+  }
+
   // 👇 LÓGICA ATUALIZADA DA GALERIA COM O NOVO POP-UP
   Future<void> _pickPhotoFromGalleryFallback() async {
     if (_isCapturingPhoto) return;
 
+    debugPrint('[ExamScanner] GABARITO: fallback galeria clicado.');
     _isCapturingPhoto = true;
     setState(() => _currentState = ScannerState.processing);
 
@@ -328,6 +550,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     final Uint8List fullImageBytes = await pickedFile.readAsBytes();
     _webPickedPreviewBytes = fullImageBytes;
+
+    if (!mounted) {
+      _isCapturingPhoto = false;
+      return;
+    }
 
     final screenSize = MediaQuery.of(context).size;
     final isBubbleSheet =
@@ -405,55 +632,163 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
   }
 
+  Widget _buildQrCameraLayer() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        debugPrint(
+          '[ExamScanner] QR preview host size='
+          '${constraints.maxWidth}x${constraints.maxHeight} kIsWeb=$kIsWeb',
+        );
+
+        return MobileScanner(
+          controller: _scannerController,
+          onDetect: _onDetect,
+          placeholderBuilder: (_) => const ColoredBox(color: Colors.black),
+          errorBuilder: (context, error) {
+            debugPrint('[ExamScanner] Erro no MobileScanner QR: $error');
+            return const ColoredBox(
+              color: Colors.black,
+              child: Center(
+                child: Text(
+                  'Nao foi possivel iniciar a camera.',
+                  style: TextStyle(color: Colors.white),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildWebCapturePlaceholder() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final useDomOverlay = _usesWebDomOverlayFlow;
+        final hasCapturedPreview = _webPickedPreviewBytes != null;
+        final platformViewActive =
+            kIsWeb && !useDomOverlay && !hasCapturedPreview;
+        final fullBlackCoverActive =
+            !hasCapturedPreview && !_webCameraController.isStarted;
+
+        _logSheetVisualState(
+          'build camera gabarito',
+          width: constraints.maxWidth,
+          height: constraints.maxHeight,
+          platformViewActive: platformViewActive,
+          fullBlackCoverActive: useDomOverlay ? false : fullBlackCoverActive,
+        );
+
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            if (hasCapturedPreview)
+              Image.memory(
+                _webPickedPreviewBytes!,
+                fit: BoxFit.cover,
+              )
+            else if (useDomOverlay)
+              _buildWebDomOverlayPlaceholder()
+            else
+              Stack(
+                fit: StackFit.expand,
+                children: [
+                  buildEmbeddedWebCameraView(_webCameraController),
+                  if (_webCameraController.isStarting)
+                    Container(
+                      color: Colors.black45,
+                      child: const Center(
+                        child: CircularProgressIndicator(color: Colors.white),
+                      ),
+                    ),
+                  if (!_webCameraController.isStarted)
+                    _buildSheetCameraCardPlaceholder(),
+                ],
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildWebDomOverlayPlaceholder() {
     return Stack(
       fit: StackFit.expand,
       children: [
-        if (_webPickedPreviewBytes != null)
-          Image.memory(
-            _webPickedPreviewBytes!,
-            fit: BoxFit.cover,
-          )
-        else
-          Container(
-            color: Colors.black,
-            child: Center(
-              child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 28.w),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      PhosphorIcons.camera,
-                      color: Colors.white,
-                      size: 60.sp,
-                    ),
-                    SizedBox(height: 18.h),
-                    Text(
-                      "Captura via navegador",
-                      style: GoogleFonts.saira(
-                        color: Colors.white,
-                        fontSize: 24.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                    SizedBox(height: 10.h),
-                    Text(
-                      "No iPhone pela web, vamos usar a câmera nativa do navegador para tirar a foto do gabarito com mais compatibilidade.",
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14.sp,
-                        height: 1.4,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        const ColoredBox(color: Colors.black),
+        _buildSheetCameraCardPlaceholder(),
       ],
+    );
+  }
+
+  Widget _buildSheetCameraCardPlaceholder() {
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 28.w),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              PhosphorIcons.camera,
+              color: Colors.white,
+              size: 60.sp,
+            ),
+            SizedBox(height: 18.h),
+            Text(
+              "Camera do gabarito",
+              style: GoogleFonts.saira(
+                color: Colors.white,
+                fontSize: 24.sp,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            SizedBox(height: 10.h),
+            Text(
+              _webCameraController.errorMessage ??
+                  _webCameraController.statusMessage ??
+                  "Toque em Iniciar camera para abrir a previa dentro da tela e alinhar as quatro ancoras pela mascara.",
+              style: TextStyle(
+                color: _webCameraController.errorMessage == null
+                    ? Colors.white70
+                    : Colors.redAccent,
+                fontSize: 14.sp,
+                height: 1.4,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _logSheetVisualState(
+    String reason, {
+    double? width,
+    double? height,
+    bool? platformViewActive,
+    bool? fullBlackCoverActive,
+  }) {
+    final now = DateTime.now();
+    if (_lastSheetVisualLogAt != null &&
+        now.difference(_lastSheetVisualLogAt!) < const Duration(seconds: 1)) {
+      return;
+    }
+
+    _lastSheetVisualLogAt = now;
+    debugPrint(
+      '[ExamScanner] GABARITO: tela montada. '
+      'reason=$reason '
+      'estado atual da tela=$_currentState '
+      'card visivel=${_currentState == ScannerState.takingPhoto} '
+      'overlay preto ativo? ${fullBlackCoverActive ?? false} '
+      'platformViewAtivo=${platformViewActive ?? false} '
+      'domOverlayFlow=$_usesWebDomOverlayFlow '
+      'cameraStarted=${_webCameraController.isStarted} '
+      'cameraStarting=${_webCameraController.isStarting} '
+      'previewCapturado=${_webPickedPreviewBytes != null} '
+      'host=${width ?? 0}x${height ?? 0}',
     );
   }
 
@@ -872,7 +1207,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       ),
     );
 
-    if (_currentState == ScannerState.scanningQR && mounted) {
+    if (_currentState == ScannerState.scanningQR &&
+        mounted &&
+        (!kIsWeb || _hasStartedQrScanner)) {
       _startScannerSafely();
     }
   }
@@ -894,10 +1231,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       body: Stack(
         children: [
           if (_currentState == ScannerState.scanningQR)
-            MobileScanner(
-              controller: _scannerController,
-              onDetect: _onDetect,
-            )
+            _buildQrCameraLayer()
           else if (showNativeCameraPreview)
             _buildUndistortedCameraPreview()
           else if (showWebCaptureStage)
@@ -968,6 +1302,10 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         final scanWindowSize = constraints.maxWidth * 0.7;
         final horizontalPadding = (constraints.maxWidth - scanWindowSize) / 2;
         final verticalPadding = (constraints.maxHeight - scanWindowSize) / 2;
+        final needsWebQrStart = kIsWeb && !_hasStartedQrScanner;
+        final qrInstruction = needsWebQrStart
+            ? 'Toque em Iniciar camera para ler o QR Code dentro da tela.'
+            : '1º Passo: Aponte para o QR Code';
 
         return Stack(
           children: [
@@ -1010,25 +1348,54 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
               bottom: 100.h,
               left: 0,
               right: 0,
-              child: Center(
-                child: Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: 20.w,
-                    vertical: 10.h,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(20.r),
-                  ),
-                  child: Text(
-                    "1º Passo: Aponte para o QR Code",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 14.sp,
-                      fontWeight: FontWeight.bold,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    margin: EdgeInsets.symmetric(horizontal: 24.w),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: 20.w,
+                      vertical: 10.h,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(20.r),
+                    ),
+                    child: Text(
+                      _qrScannerErrorMessage ?? qrInstruction,
+                      style: TextStyle(
+                        color: _qrScannerErrorMessage == null
+                            ? Colors.white
+                            : Colors.redAccent,
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
                   ),
-                ),
+                  if (needsWebQrStart) ...[
+                    SizedBox(height: 14.h),
+                    ElevatedButton.icon(
+                      onPressed:
+                          _isStartingQrScanner ? null : _startScannerSafely,
+                      icon: _isStartingQrScanner
+                          ? SizedBox(
+                              width: 18.w,
+                              height: 18.w,
+                              child: const CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.black,
+                              ),
+                            )
+                          : const Icon(PhosphorIcons.camera),
+                      label: Text(
+                        _isStartingQrScanner
+                            ? 'Iniciando...'
+                            : 'Iniciar camera',
+                      ),
+                    ),
+                  ],
+                ],
               ),
             )
           ],
@@ -1050,6 +1417,24 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
         final horizontalPadding = (constraints.maxWidth - boxWidth) / 2;
         final verticalPadding = (constraints.maxHeight - boxHeight) / 2;
+        final webCameraReady = kIsWeb && _webCameraController.isStarted;
+        final webCameraBusy = kIsWeb && _webCameraController.isStarting;
+        final photoInstruction = kIsWeb
+            ? (webCameraReady
+                ? 'Encaixe as 4 ancoras pretas dentro da linha verde'
+                : 'Toque em Iniciar camera para alinhar o gabarito dentro da mascara')
+            : 'Encaixe as 4 ancoras pretas dentro da linha verde';
+
+        if (kIsWeb) {
+          _logSheetVisualState(
+            'overlay gabarito/card visivel',
+            width: constraints.maxWidth,
+            height: constraints.maxHeight,
+            platformViewActive:
+                !_usesWebDomOverlayFlow && _webPickedPreviewBytes == null,
+            fullBlackCoverActive: false,
+          );
+        }
 
         return Stack(
           children: [
@@ -1126,11 +1511,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                       borderRadius: BorderRadius.circular(16.r),
                     ),
                     child: Text(
-                      kIsWeb
-                          ? "No iPhone/web, toque para abrir a câmera do navegador e fotografe o gabarito"
-                          : "Encaixe as 4 âncoras pretas dentro da linha verde",
+                      _webCameraController.errorMessage ?? photoInstruction,
                       style: TextStyle(
-                        color: Colors.white,
+                        color: _webCameraController.errorMessage == null
+                            ? Colors.white
+                            : Colors.redAccent,
                         fontSize: 12.sp,
                       ),
                       textAlign: TextAlign.center,
@@ -1140,37 +1525,65 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   if (kIsWeb)
                     Column(
                       children: [
-                        GestureDetector(
-                          onTap: _takePhotoAndSendToAI,
-                          child: Container(
-                            height: 70.w,
-                            width: 70.w,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: Colors.grey[400]!,
-                                width: 4,
-                              ),
+                        if (!webCameraReady)
+                          ElevatedButton.icon(
+                            onPressed: webCameraBusy || _isCapturingPhoto
+                                ? null
+                                : _startPhotoCameraFromUserGesture,
+                            icon: webCameraBusy
+                                ? SizedBox(
+                                    width: 18.w,
+                                    height: 18.w,
+                                    child: const CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.black,
+                                    ),
+                                  )
+                                : const Icon(PhosphorIcons.camera),
+                            label: Text(
+                              _isCapturingPhoto
+                                  ? 'Processando...'
+                                  : webCameraBusy
+                                      ? 'Iniciando...'
+                                      : 'Iniciar camera',
                             ),
-                            child: Center(
-                              child: Icon(
-                                PhosphorIcons.camera,
-                                color: Colors.black,
-                                size: 28.sp,
+                          )
+                        else
+                          GestureDetector(
+                            onTap: _isCapturingPhoto
+                                ? null
+                                : _takePhotoAndSendToAI,
+                            child: Container(
+                              height: 70.w,
+                              width: 70.w,
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: Colors.grey[400]!,
+                                  width: 4,
+                                ),
+                              ),
+                              child: Center(
+                                child: Icon(
+                                  PhosphorIcons.camera,
+                                  color: Colors.black,
+                                  size: 28.sp,
+                                ),
                               ),
                             ),
                           ),
-                        ),
                         SizedBox(height: 14.h),
                         TextButton.icon(
-                          onPressed: _pickPhotoFromGalleryFallback,
+                          onPressed: _isCapturingPhoto
+                              ? null
+                              : _pickPhotoFromGalleryFallback,
                           icon: const Icon(
                             PhosphorIcons.image,
                             color: Colors.white,
                           ),
                           label: const Text(
-                            "Escolher da galeria",
+                            "Escolher da galeria (fallback)",
                             style: TextStyle(color: Colors.white),
                           ),
                         ),

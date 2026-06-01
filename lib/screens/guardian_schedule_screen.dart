@@ -1,6 +1,7 @@
 import 'package:academyhub_mobile/model/guardian_auth_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/services/guardian_auth_service.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -36,11 +37,12 @@ class _GuardianScheduleScreenState extends State<GuardianScheduleScreen> {
   Future<void> _load() async {
     final token = context.read<AuthProvider>().token;
 
-    if (token == null || token.trim().isEmpty) {
-      setState(() {
-        _isLoading = false;
-        _error = 'Sua sessão expirou. Entre novamente para acessar a grade.';
-      });
+    final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await context.read<AuthProvider>().expireGuardianSession(
+            context,
+            reason: 'guardian_token_missing',
+          );
       return;
     }
 
@@ -51,7 +53,7 @@ class _GuardianScheduleScreenState extends State<GuardianScheduleScreen> {
 
     try {
       final result = await _service.getGuardianSchedule(
-        token: token,
+        token: token!.trim(),
         studentId: widget.student.id,
       );
 
@@ -60,6 +62,12 @@ class _GuardianScheduleScreenState extends State<GuardianScheduleScreen> {
         _data = result;
         _isLoading = false;
       });
+    } on GuardianSessionExpiredException catch (error) {
+      if (!mounted) return;
+      await context.read<AuthProvider>().expireGuardianSession(
+            context,
+            reason: error.message,
+          );
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -252,7 +260,8 @@ class _GuardianLessonHero extends StatelessWidget {
     if (lesson == null) {
       return const _GuardianAcademicEmpty(
         title: 'Sem aulas em destaque',
-        message: 'Quando houver aulas programadas, a próxima aula aparecerá aqui.',
+        message:
+            'Quando houver aulas programadas, a próxima aula aparecerá aqui.',
       );
     }
 
@@ -268,9 +277,7 @@ class _GuardianLessonHero extends StatelessWidget {
         ),
         gradient: LinearGradient(
           colors: [
-            isCurrent
-                ? const Color(0xFFE8F7EF)
-                : const Color(0xFFEAF3FF),
+            isCurrent ? const Color(0xFFE8F7EF) : const Color(0xFFEAF3FF),
             Colors.white,
           ],
           begin: Alignment.topLeft,
@@ -282,9 +289,8 @@ class _GuardianLessonHero extends StatelessWidget {
         children: [
           _GuardianAcademicPill(
             label: isCurrent ? 'Acontecendo agora' : 'Próxima aula',
-            color: isCurrent
-                ? const Color(0xFF00A859)
-                : const Color(0xFF2F80ED),
+            color:
+                isCurrent ? const Color(0xFF00A859) : const Color(0xFF2F80ED),
           ),
           SizedBox(height: 14.h),
           Text(

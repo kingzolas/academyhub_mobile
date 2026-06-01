@@ -1,8 +1,9 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/model/guardian_absence_justification_request_model.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
@@ -43,6 +44,7 @@ class GuardianAbsenceJustificationRequestService {
           .toList();
     }
 
+    _throwIfGuardianSessionExpired(response, decoded);
     throw Exception(_errorMessage(response, decoded));
   }
 
@@ -91,6 +93,7 @@ class GuardianAbsenceJustificationRequestService {
       throw Exception('Resposta inválida da API.');
     }
 
+    _throwIfGuardianSessionExpired(response, decoded);
     throw Exception(_errorMessage(response, decoded));
   }
 
@@ -148,6 +151,7 @@ class GuardianAbsenceJustificationRequestService {
       throw Exception('Resposta inválida da API.');
     }
 
+    _throwIfGuardianSessionExpired(response, decoded);
     throw Exception(_errorMessage(response, decoded));
   }
 
@@ -173,6 +177,7 @@ class GuardianAbsenceJustificationRequestService {
       throw Exception('Resposta inválida da API.');
     }
 
+    _throwIfGuardianSessionExpired(response, decoded);
     throw Exception(_errorMessage(response, decoded));
   }
 
@@ -190,6 +195,19 @@ class GuardianAbsenceJustificationRequestService {
       }
     }
     return 'Não foi possível concluir a solicitação.';
+  }
+
+  void _throwIfGuardianSessionExpired(
+    http.Response response,
+    dynamic decoded,
+  ) {
+    final sessionException = guardianSessionExceptionFromResponse(
+      statusCode: response.statusCode,
+      payload: decoded,
+    );
+    if (sessionException != null) {
+      throw sessionException;
+    }
   }
 
   String _dateOnly(DateTime value) {

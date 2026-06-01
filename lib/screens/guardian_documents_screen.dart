@@ -2,6 +2,7 @@ import 'package:academyhub_mobile/model/guardian_auth_model.dart';
 import 'package:academyhub_mobile/model/guardian_official_document_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/guardian_official_documents_provider.dart';
+import 'package:academyhub_mobile/services/guardian_session_exception.dart';
 import 'package:academyhub_mobile/services/official_document_mobile_file_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -80,6 +81,14 @@ class _GuardianDocumentsScreenState extends State<GuardianDocumentsScreen> {
     }
   }
 
+  Future<void> _expireGuardianSession([Object? error]) async {
+    if (!mounted) return;
+    await context.read<AuthProvider>().expireGuardianSession(
+          context,
+          reason: error?.toString(),
+        );
+  }
+
   Future<void> _loadDocuments({bool silent = false}) async {
     final student = widget.selectedStudent;
     final documents = context.read<GuardianOfficialDocumentsProvider>();
@@ -90,15 +99,21 @@ class _GuardianDocumentsScreenState extends State<GuardianDocumentsScreen> {
       return;
     }
 
-    if (token == null || token.trim().isEmpty) {
+    final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await _expireGuardianSession('guardian_token_missing');
       return;
     }
 
-    await documents.load(
-      token: token,
-      studentId: student.id,
-      silent: silent,
-    );
+    try {
+      await documents.load(
+        token: token!.trim(),
+        studentId: student.id,
+        silent: silent,
+      );
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
+    }
   }
 
   Future<void> _showRequestSheet(
@@ -112,8 +127,9 @@ class _GuardianDocumentsScreenState extends State<GuardianDocumentsScreen> {
       return;
     }
 
-    if (token == null || token.trim().isEmpty) {
-      _showFeedback('Sua sessão expirou. Entre novamente para continuar.');
+    final hasRequestToken = (token ?? '').trim().isNotEmpty;
+    if (!hasRequestToken) {
+      await _expireGuardianSession('guardian_token_missing');
       return;
     }
 
@@ -223,13 +239,19 @@ class _GuardianDocumentsScreenState extends State<GuardianDocumentsScreen> {
                                   }
 
                                   HapticFeedback.selectionClick();
-                                  final success = await provider.createRequest(
-                                    token: token,
-                                    studentId: student.id,
-                                    documentType: item.type,
-                                    purpose: purpose,
-                                    notes: notesController.text,
-                                  );
+                                  bool success;
+                                  try {
+                                    success = await provider.createRequest(
+                                      token: token!.trim(),
+                                      studentId: student.id,
+                                      documentType: item.type,
+                                      purpose: purpose,
+                                      notes: notesController.text,
+                                    );
+                                  } on GuardianSessionExpiredException catch (error) {
+                                    await _expireGuardianSession(error);
+                                    return;
+                                  }
 
                                   if (!mounted) return;
                                   if (success) {
@@ -283,16 +305,23 @@ class _GuardianDocumentsScreenState extends State<GuardianDocumentsScreen> {
 
   Future<void> _openDocument(GuardianOfficialDocument document) async {
     final token = context.read<AuthProvider>().token;
-    if (token == null || token.trim().isEmpty) {
-      _showFeedback('Sua sessão expirou. Entre novamente para baixar.');
+    final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await _expireGuardianSession('guardian_token_missing');
       return;
     }
 
     final provider = context.read<GuardianOfficialDocumentsProvider>();
-    final Uint8List? bytes = await provider.downloadDocument(
-      token: token,
-      document: document,
-    );
+    Uint8List? bytes;
+    try {
+      bytes = await provider.downloadDocument(
+        token: token!.trim(),
+        document: document,
+      );
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
+      return;
+    }
 
     if (!mounted) return;
     if (bytes == null) {
@@ -321,16 +350,23 @@ class _GuardianDocumentsScreenState extends State<GuardianDocumentsScreen> {
 
   Future<void> _shareDocument(GuardianOfficialDocument document) async {
     final token = context.read<AuthProvider>().token;
-    if (token == null || token.trim().isEmpty) {
-      _showFeedback('Sua sessão expirou. Entre novamente para baixar.');
+    final hasGuardianToken = (token ?? '').trim().isNotEmpty;
+    if (!hasGuardianToken) {
+      await _expireGuardianSession('guardian_token_missing');
       return;
     }
 
     final provider = context.read<GuardianOfficialDocumentsProvider>();
-    final Uint8List? bytes = await provider.downloadDocument(
-      token: token,
-      document: document,
-    );
+    Uint8List? bytes;
+    try {
+      bytes = await provider.downloadDocument(
+        token: token!.trim(),
+        document: document,
+      );
+    } on GuardianSessionExpiredException catch (error) {
+      await _expireGuardianSession(error);
+      return;
+    }
 
     if (!mounted) return;
     if (bytes == null) {
