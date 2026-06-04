@@ -1,5 +1,8 @@
 // lib/screens/teacher/exam_scanner_screen.dart
 
+import 'dart:convert';
+
+import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/model/exam_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
@@ -22,20 +25,69 @@ import 'embedded_web_camera_stub.dart'
 
 enum ScannerState { scanningQR, takingPhoto, processing }
 
-Uint8List processImageCrop(Map<String, dynamic> data) {
+const bool kOmrFileDiagnostic =
+    bool.fromEnvironment('OMR_FILE_DIAGNOSTIC', defaultValue: false);
+
+Map<String, dynamic> processImageForUpload(Map<String, dynamic> data) {
   final bytes = data['bytes'] as Uint8List;
   final screenW = data['screenW'] as double;
   final screenH = data['screenH'] as double;
   final boxW = data['boxW'] as double;
   final boxH = data['boxH'] as double;
+  final isBubbleSheet = data['isBubbleSheet'] == true;
+  final source = data['source']?.toString() ?? 'unknown';
 
   img.Image? decodedImage = img.decodeImage(bytes);
-  if (decodedImage == null) return bytes;
+  if (decodedImage == null) {
+    return {
+      'bytes': bytes,
+      'source': source,
+      'isBubbleSheet': isBubbleSheet,
+      'cropMode': 'decode_failed_passthrough',
+      'originalWidth': null,
+      'originalHeight': null,
+      'cropX': 0,
+      'cropY': 0,
+      'cropWidth': null,
+      'cropHeight': null,
+      'croppedWidth': null,
+      'croppedHeight': null,
+      'removedLeftPercent': 0,
+      'removedRightPercent': 0,
+      'removedTopPercent': 0,
+      'removedBottomPercent': 0,
+    };
+  }
 
   decodedImage = img.bakeOrientation(decodedImage);
 
   final imgW = decodedImage.width.toDouble();
   final imgH = decodedImage.height.toDouble();
+
+  if (isBubbleSheet) {
+    return {
+      'bytes': bytes,
+      'source': source,
+      'isBubbleSheet': true,
+      'cropMode': 'full_sheet_preserve_anchors_passthrough',
+      'originalWidth': decodedImage.width,
+      'originalHeight': decodedImage.height,
+      'screenWidth': screenW,
+      'screenHeight': screenH,
+      'maskBoxWidth': boxW,
+      'maskBoxHeight': boxH,
+      'cropX': 0,
+      'cropY': 0,
+      'cropWidth': decodedImage.width,
+      'cropHeight': decodedImage.height,
+      'croppedWidth': decodedImage.width,
+      'croppedHeight': decodedImage.height,
+      'removedLeftPercent': 0,
+      'removedRightPercent': 0,
+      'removedTopPercent': 0,
+      'removedBottomPercent': 0,
+    };
+  }
 
   double scale =
       (screenW / imgW) > (screenH / imgH) ? (screenW / imgW) : (screenH / imgH);
@@ -67,7 +119,30 @@ Uint8List processImageCrop(Map<String, dynamic> data) {
     height: finalH,
   );
 
-  return img.encodeJpg(croppedImage, quality: 90);
+  return {
+    'bytes': img.encodeJpg(croppedImage, quality: 90),
+    'source': source,
+    'isBubbleSheet': false,
+    'cropMode': 'mask_crop',
+    'originalWidth': decodedImage.width,
+    'originalHeight': decodedImage.height,
+    'screenWidth': screenW,
+    'screenHeight': screenH,
+    'maskBoxWidth': boxW,
+    'maskBoxHeight': boxH,
+    'cropX': finalX,
+    'cropY': finalY,
+    'cropWidth': finalW,
+    'cropHeight': finalH,
+    'croppedWidth': croppedImage.width,
+    'croppedHeight': croppedImage.height,
+    'removedLeftPercent': finalX / decodedImage.width,
+    'removedRightPercent':
+        (decodedImage.width - finalX - finalW) / decodedImage.width,
+    'removedTopPercent': finalY / decodedImage.height,
+    'removedBottomPercent':
+        (decodedImage.height - finalY - finalH) / decodedImage.height,
+  };
 }
 
 class ExamScannerScreen extends StatefulWidget {
@@ -103,10 +178,60 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   bool _isStartingQrScanner = false;
   String? _qrScannerErrorMessage;
   DateTime? _lastSheetVisualLogAt;
+  int _correlationSequence = 0;
+  int _qrDetectionEvents = 0;
+  String? _lastDetectedQrCode;
+  String? _activeCorrelationId;
+  Stopwatch? _qrScanStopwatch;
+  Stopwatch? _scanTotalStopwatch;
+  final TextEditingController _diagnosticQrUuidController =
+      TextEditingController();
 
   bool get _isWebCameraFlow => kIsWeb;
   bool get _usesWebDomOverlayFlow =>
       kIsWeb && _webCameraController.shouldUseDomOverlay;
+
+  String _newCorrelationId() {
+    _correlationSequence += 1;
+    return 'omr-${DateTime.now().microsecondsSinceEpoch}-$_correlationSequence';
+  }
+
+  void _logOmrPerformance(String event, Map<String, Object?> data) {
+    if (!kOmrPerformanceDebug) return;
+    debugPrint('[OMR PERF MOBILE SCANNER] $event ${jsonEncode(data)}');
+  }
+
+  Map<String, dynamic> _buildBubbleSheetPassthroughImage({
+    required Uint8List bytes,
+    required String source,
+    required Size screenSize,
+    required double boxW,
+    required double boxH,
+    img.Image? originalImage,
+  }) {
+    return {
+      'bytes': bytes,
+      'source': source,
+      'isBubbleSheet': true,
+      'cropMode': 'full_sheet_preserve_anchors_passthrough',
+      'originalWidth': originalImage?.width,
+      'originalHeight': originalImage?.height,
+      'screenWidth': screenSize.width,
+      'screenHeight': screenSize.height,
+      'maskBoxWidth': boxW,
+      'maskBoxHeight': boxH,
+      'cropX': 0,
+      'cropY': 0,
+      'cropWidth': originalImage?.width,
+      'cropHeight': originalImage?.height,
+      'croppedWidth': originalImage?.width,
+      'croppedHeight': originalImage?.height,
+      'removedLeftPercent': 0,
+      'removedRightPercent': 0,
+      'removedTopPercent': 0,
+      'removedBottomPercent': 0,
+    };
+  }
 
   @override
   void initState() {
@@ -139,6 +264,15 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       );
       await _scannerController.start();
       debugPrint('[ExamScanner] Scanner QR iniciado com sucesso.');
+      _qrDetectionEvents = 0;
+      _lastDetectedQrCode = null;
+      _qrScanStopwatch = Stopwatch()..start();
+      _logOmrPerformance('qr_scanner_started', {
+        'baseUrl': ApiConfig.baseUrl,
+        'apiUrl': ApiConfig.apiUrl,
+        'usingLocalhost': ApiConfig.baseUrl.contains('localhost'),
+        'kIsWeb': kIsWeb,
+      });
       if (mounted) {
         setState(() {
           _hasStartedQrScanner = true;
@@ -206,6 +340,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       setState(() {
         _scannedQrCodeUuid = null;
         _scannedSheetData = null;
+        _activeCorrelationId = null;
+        _scanTotalStopwatch = null;
         _currentState = ScannerState.scanningQR;
       });
 
@@ -221,23 +357,129 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   void dispose() {
     _scannerController.dispose();
     _cameraController?.dispose();
+    _diagnosticQrUuidController.dispose();
     _webCameraController
       ..removeListener(_onWebCameraChanged)
       ..dispose();
     super.dispose();
   }
 
+  String _friendlyOmrError(Object error) {
+    final message =
+        error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+
+    if (message.isEmpty) {
+      return 'Nao foi possivel processar o gabarito. Tente capturar novamente.';
+    }
+
+    return message;
+  }
+
+  Future<void> _runFileQrDiagnostic() async {
+    final qrCodeUuid = _diagnosticQrUuidController.text.trim();
+    if (qrCodeUuid.isEmpty || _currentState != ScannerState.scanningQR) {
+      return;
+    }
+
+    final correlationId = _newCorrelationId();
+    _activeCorrelationId = correlationId;
+    _scanTotalStopwatch = Stopwatch()..start();
+    _qrScanStopwatch ??= Stopwatch()..start();
+
+    _logOmrPerformance('file_qr_diagnostic_started', {
+      'correlationId': correlationId,
+      'qrCodeUuid': qrCodeUuid,
+      'baseUrl': ApiConfig.baseUrl,
+      'usingLocalhost': ApiConfig.baseUrl.contains('localhost'),
+    });
+
+    setState(() => _currentState = ScannerState.processing);
+    await _scannerController.stop();
+
+    if (!mounted) return;
+    final token = Provider.of<AuthProvider>(context, listen: false).token;
+
+    final sheetData = await showScannerOperationDialog<Map<String, dynamic>>(
+      context: context,
+      loadingTitle: 'Identificando...',
+      loadingMessage: 'Validando QR informado por arquivo.',
+      loadingDetail: 'Teste OMR Web sem camera',
+      successTitle: 'Aluno Encontrado!',
+      successMessage: 'Agora selecione a imagem do gabarito.',
+      successVisibleDuration: const Duration(milliseconds: 700),
+      operation: () async {
+        final verifyStopwatch = Stopwatch()..start();
+        try {
+          final data = await ExamApiService().verifySheetData(
+            qrCodeUuid: qrCodeUuid,
+            token: token!,
+            correlationId: correlationId,
+          );
+          verifyStopwatch.stop();
+          _logOmrPerformance('file_qr_verify_completed', {
+            'correlationId': correlationId,
+            'verifyMs': verifyStopwatch.elapsedMilliseconds,
+            'studentName': data['studentName'],
+            'examId': data['examId']?.toString(),
+            'correctionType': data['correctionType'],
+            'hasOmrLayout': data['hasOmrLayout'],
+            'apiPerformance': data['performance'],
+          });
+          return data;
+        } catch (error) {
+          verifyStopwatch.stop();
+          _logOmrPerformance('file_qr_verify_failed', {
+            'correlationId': correlationId,
+            'verifyMs': verifyStopwatch.elapsedMilliseconds,
+            'error': error.toString(),
+          });
+          rethrow;
+        }
+      },
+    );
+
+    if (sheetData == null) {
+      await _resetToQrMode();
+      return;
+    }
+
+    setState(() {
+      _scannedQrCodeUuid = qrCodeUuid;
+      _scannedSheetData = sheetData;
+      _currentState = ScannerState.takingPhoto;
+    });
+  }
+
   // 👇 LÓGICA ATUALIZADA DO QR CODE COM O NOVO POP-UP
   void _onDetect(BarcodeCapture capture) async {
-    if (_currentState != ScannerState.scanningQR) return;
-
     final List<Barcode> barcodes = capture.barcodes;
     if (barcodes.isEmpty) return;
 
     final String? qrCodeUuid = barcodes.first.rawValue;
     if (qrCodeUuid == null || qrCodeUuid.isEmpty) return;
 
+    _qrDetectionEvents += 1;
+    final sameAsPrevious = _lastDetectedQrCode == qrCodeUuid;
+    _lastDetectedQrCode = qrCodeUuid;
+    _logOmrPerformance('qr_detect_event', {
+      'qrDetectionEvents': _qrDetectionEvents,
+      'sameAsPrevious': sameAsPrevious,
+      'state': _currentState.name,
+      'elapsedSinceScannerStartMs': _qrScanStopwatch?.elapsedMilliseconds,
+    });
+
+    if (_currentState != ScannerState.scanningQR) return;
+
+    final correlationId = _newCorrelationId();
+    _activeCorrelationId = correlationId;
+    _scanTotalStopwatch = Stopwatch()..start();
+
     debugPrint('[ExamScanner] QR: detectado $qrCodeUuid');
+    _logOmrPerformance('qr_accept', {
+      'correlationId': correlationId,
+      'elapsedUntilQrMs': _qrScanStopwatch?.elapsedMilliseconds,
+      'qrDetectionEvents': _qrDetectionEvents,
+    });
     setState(() => _currentState = ScannerState.processing);
     await _scannerController.stop();
     debugPrint('[ExamScanner] QR: scanner pausado/parado.');
@@ -254,10 +496,32 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       successMessage: 'Preparando a câmera de correção.',
       successVisibleDuration: const Duration(milliseconds: 900),
       operation: () async {
-        final data = await ExamApiService()
-            .verifySheetData(qrCodeUuid: qrCodeUuid, token: token!);
-        if (!kIsWeb) await _initPhotoCamera();
-        return data;
+        final verifyStopwatch = Stopwatch()..start();
+        try {
+          final data = await ExamApiService().verifySheetData(
+            qrCodeUuid: qrCodeUuid,
+            token: token!,
+            correlationId: correlationId,
+          );
+          verifyStopwatch.stop();
+          _logOmrPerformance('qr_verify_completed', {
+            'correlationId': correlationId,
+            'verifyMs': verifyStopwatch.elapsedMilliseconds,
+            'studentName': data['studentName'],
+            'examId': data['examId']?.toString(),
+            'correctionType': data['correctionType'],
+          });
+          if (!kIsWeb) await _initPhotoCamera();
+          return data;
+        } catch (error) {
+          verifyStopwatch.stop();
+          _logOmrPerformance('qr_verify_failed', {
+            'correlationId': correlationId,
+            'verifyMs': verifyStopwatch.elapsedMilliseconds,
+            'error': error.toString(),
+          });
+          rethrow;
+        }
       },
     );
 
@@ -297,6 +561,10 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     _isCapturingPhoto = true;
 
     Uint8List fullImageBytes;
+    final correlationId = _activeCorrelationId ?? _newCorrelationId();
+    _activeCorrelationId = correlationId;
+    _scanTotalStopwatch ??= Stopwatch()..start();
+    final captureStopwatch = Stopwatch()..start();
 
     if (_isWebCameraFlow) {
       if (!_webCameraController.isStarted) {
@@ -311,6 +579,13 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
           '[ExamScanner] GABARITO: captura solicitada pela camera web embutida.',
         );
         fullImageBytes = await _webCameraController.captureFrame();
+        captureStopwatch.stop();
+        _logOmrPerformance('sheet_capture_completed', {
+          'correlationId': correlationId,
+          'source': 'web_camera',
+          'captureMs': captureStopwatch.elapsedMilliseconds,
+          'bytes': fullImageBytes.length,
+        });
       } catch (e) {
         debugPrint('[ExamScanner] Erro ao capturar frame da camera web: $e');
         if (mounted) {
@@ -336,6 +611,13 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       }
       final XFile photo = await _cameraController!.takePicture();
       fullImageBytes = await photo.readAsBytes();
+      captureStopwatch.stop();
+      _logOmrPerformance('sheet_capture_completed', {
+        'correlationId': correlationId,
+        'source': 'camera_package',
+        'captureMs': captureStopwatch.elapsedMilliseconds,
+        'bytes': fullImageBytes.length,
+      });
     }
 
     await _processCapturedSheetImage(fullImageBytes);
@@ -351,6 +633,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       '[ExamScanner] GABARITO: iniciando processamento. '
       'bytes=${fullImageBytes.length}',
     );
+    final correlationId = _activeCorrelationId ?? _newCorrelationId();
+    _activeCorrelationId = correlationId;
+    _scanTotalStopwatch ??= Stopwatch()..start();
     setState(() => _currentState = ScannerState.processing);
 
     final screenSize = MediaQuery.of(context).size;
@@ -360,6 +645,18 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         isBubbleSheet ? screenSize.width * 0.85 : screenSize.width * 0.90;
     final boxH = isBubbleSheet ? boxW * 1.05 : boxW * 0.55;
     final token = Provider.of<AuthProvider>(context, listen: false).token;
+
+    _logOmrPerformance('sheet_processing_started', {
+      'correlationId': correlationId,
+      'fullImageBytes': fullImageBytes.length,
+      'screenWidth': screenSize.width,
+      'screenHeight': screenSize.height,
+      'isBubbleSheet': isBubbleSheet,
+      'maskBoxWidth': boxW,
+      'maskBoxHeight': boxH,
+      'examId': _scannedSheetData?['examId']?.toString(),
+      'correctionType': _scannedSheetData?['correctionType'],
+    });
 
     final studentName = _scannedSheetData?['studentName']?.toUpperCase() ??
         'ALUNO DESCONHECIDO';
@@ -375,21 +672,77 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         successMessage: 'O resultado está pronto para validação.',
         operation: () async {
           // 1. Recorta a imagem
-          final Uint8List croppedBytes = await compute(processImageCrop, {
-            'bytes': fullImageBytes,
-            'screenW': screenSize.width,
-            'screenH': screenSize.height,
-            'boxW': boxW,
-            'boxH': boxH,
+          final cropStopwatch = Stopwatch()..start();
+          final processedImage = isBubbleSheet
+              ? _buildBubbleSheetPassthroughImage(
+                  bytes: fullImageBytes,
+                  source: kIsWeb ? 'web_camera' : 'camera_package',
+                  screenSize: screenSize,
+                  boxW: boxW,
+                  boxH: boxH,
+                  originalImage: kOmrPerformanceDebug
+                      ? img.decodeImage(fullImageBytes)
+                      : null,
+                )
+              : await compute(processImageForUpload, {
+                  'bytes': fullImageBytes,
+                  'screenW': screenSize.width,
+                  'screenH': screenSize.height,
+                  'boxW': boxW,
+                  'boxH': boxH,
+                  'isBubbleSheet': false,
+                  'source': kIsWeb ? 'web_camera' : 'camera_package',
+                });
+          cropStopwatch.stop();
+          final croppedBytes = processedImage['bytes'] as Uint8List;
+          if (kOmrPerformanceDebug && mounted) {
+            setState(() => _webPickedPreviewBytes = croppedBytes);
+          }
+          _logOmrPerformance('sheet_crop_completed', {
+            'correlationId': correlationId,
+            'cropMs': cropStopwatch.elapsedMilliseconds,
+            'cropMode': processedImage['cropMode'],
+            'source': processedImage['source'],
+            'originalWidth': processedImage['originalWidth'],
+            'originalHeight': processedImage['originalHeight'],
+            'croppedBytes': croppedBytes.length,
+            'croppedWidth': processedImage['croppedWidth'],
+            'croppedHeight': processedImage['croppedHeight'],
+            'cropRect': {
+              'x': processedImage['cropX'],
+              'y': processedImage['cropY'],
+              'width': processedImage['cropWidth'],
+              'height': processedImage['cropHeight'],
+            },
+            'removedPercent': {
+              'left': processedImage['removedLeftPercent'],
+              'right': processedImage['removedRightPercent'],
+              'top': processedImage['removedTopPercent'],
+              'bottom': processedImage['removedBottomPercent'],
+            },
+            'correctionType': _scannedSheetData?['correctionType'],
+            'totalQuestions': _scannedSheetData?['totalQuestions'],
           });
 
           // 2. Envia para a IA
-          return await ExamApiService().processOmrImage(
+          final omrStopwatch = Stopwatch()..start();
+          final result = await ExamApiService().processOmrImage(
             imageBytes: croppedBytes,
             token: token!,
             correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
             examId: _scannedSheetData?['examId'],
+            correlationId: correlationId,
           );
+          omrStopwatch.stop();
+          _logOmrPerformance('sheet_omr_completed', {
+            'correlationId': correlationId,
+            'omrRequestMs': omrStopwatch.elapsedMilliseconds,
+            'scanTotalMs': _scanTotalStopwatch?.elapsedMilliseconds,
+            'apiCorrelationId': result['correlationId'],
+            'apiPerformance': result['performance'],
+            'success': result['success'],
+          });
+          return result;
         },
       );
       debugPrint(
@@ -404,9 +757,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Nao foi possivel processar o gabarito. Tente capturar novamente.',
+            _friendlyOmrError(e),
           ),
           backgroundColor: Colors.red,
         ),
@@ -549,7 +902,21 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     }
 
     final Uint8List fullImageBytes = await pickedFile.readAsBytes();
+    img.Image? originalImage;
+    if (kOmrPerformanceDebug) {
+      originalImage = img.decodeImage(fullImageBytes);
+    }
     _webPickedPreviewBytes = fullImageBytes;
+    final correlationId = _activeCorrelationId ?? _newCorrelationId();
+    _activeCorrelationId = correlationId;
+    _scanTotalStopwatch ??= Stopwatch()..start();
+    _logOmrPerformance('gallery_image_selected', {
+      'correlationId': correlationId,
+      'fullImageBytes': fullImageBytes.length,
+      'originalWidth': originalImage?.width,
+      'originalHeight': originalImage?.height,
+      'fileName': pickedFile.name,
+    });
 
     if (!mounted) {
       _isCapturingPhoto = false;
@@ -566,30 +933,115 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     final studentName = _scannedSheetData?['studentName']?.toUpperCase() ??
         'ALUNO DESCONHECIDO';
 
-    final aiResult = await showScannerOperationDialog<Map<String, dynamic>>(
-      context: context,
-      loadingTitle: 'Analisando Prova',
-      loadingMessage: 'A Inteligência Artificial está calculando a nota...',
-      loadingDetail: 'Aluno(a): $studentName',
-      successTitle: 'Correção Concluída!',
-      successMessage: 'O resultado está pronto para validação.',
-      operation: () async {
-        final Uint8List croppedBytes = await compute(processImageCrop, {
-          'bytes': fullImageBytes,
-          'screenW': screenSize.width,
-          'screenH': screenSize.height,
-          'boxW': boxW,
-          'boxH': boxH,
-        });
+    _logOmrPerformance('gallery_processing_started', {
+      'correlationId': correlationId,
+      'screenWidth': screenSize.width,
+      'screenHeight': screenSize.height,
+      'isBubbleSheet': isBubbleSheet,
+      'maskBoxWidth': boxW,
+      'maskBoxHeight': boxH,
+      'examId': _scannedSheetData?['examId']?.toString(),
+      'correctionType': _scannedSheetData?['correctionType'],
+    });
 
-        return await ExamApiService().processOmrImage(
-          imageBytes: croppedBytes,
-          token: token!,
-          correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
-          examId: _scannedSheetData?['examId'],
-        );
-      },
-    );
+    Map<String, dynamic>? aiResult;
+    try {
+      aiResult = await showScannerOperationDialog<Map<String, dynamic>>(
+        context: context,
+        loadingTitle: 'Analisando Prova',
+        loadingMessage: 'A Inteligência Artificial está calculando a nota...',
+        loadingDetail: 'Aluno(a): $studentName',
+        successTitle: 'Correção Concluída!',
+        successMessage: 'O resultado está pronto para validação.',
+        operation: () async {
+          final cropStopwatch = Stopwatch()..start();
+          final processedImage = isBubbleSheet
+              ? _buildBubbleSheetPassthroughImage(
+                  bytes: fullImageBytes,
+                  source: 'gallery',
+                  screenSize: screenSize,
+                  boxW: boxW,
+                  boxH: boxH,
+                  originalImage: originalImage,
+                )
+              : await compute(processImageForUpload, {
+                  'bytes': fullImageBytes,
+                  'screenW': screenSize.width,
+                  'screenH': screenSize.height,
+                  'boxW': boxW,
+                  'boxH': boxH,
+                  'isBubbleSheet': false,
+                  'source': 'gallery',
+                });
+          cropStopwatch.stop();
+          final croppedBytes = processedImage['bytes'] as Uint8List;
+          if (kOmrPerformanceDebug && mounted) {
+            setState(() => _webPickedPreviewBytes = croppedBytes);
+          }
+          _logOmrPerformance('gallery_crop_completed', {
+            'correlationId': correlationId,
+            'cropMs': cropStopwatch.elapsedMilliseconds,
+            'cropMode': processedImage['cropMode'],
+            'source': processedImage['source'],
+            'originalWidth': processedImage['originalWidth'],
+            'originalHeight': processedImage['originalHeight'],
+            'croppedBytes': croppedBytes.length,
+            'croppedWidth': processedImage['croppedWidth'],
+            'croppedHeight': processedImage['croppedHeight'],
+            'cropRect': {
+              'x': processedImage['cropX'],
+              'y': processedImage['cropY'],
+              'width': processedImage['cropWidth'],
+              'height': processedImage['cropHeight'],
+            },
+            'removedPercent': {
+              'left': processedImage['removedLeftPercent'],
+              'right': processedImage['removedRightPercent'],
+              'top': processedImage['removedTopPercent'],
+              'bottom': processedImage['removedBottomPercent'],
+            },
+            'correctionType': _scannedSheetData?['correctionType'],
+            'totalQuestions': _scannedSheetData?['totalQuestions'],
+          });
+
+          final omrStopwatch = Stopwatch()..start();
+          final result = await ExamApiService().processOmrImage(
+            imageBytes: croppedBytes,
+            token: token!,
+            correctionType: isBubbleSheet ? 'BUBBLE_SHEET' : 'DIRECT_GRADE',
+            examId: _scannedSheetData?['examId'],
+            correlationId: correlationId,
+          );
+          omrStopwatch.stop();
+          _logOmrPerformance('gallery_omr_completed', {
+            'correlationId': correlationId,
+            'omrRequestMs': omrStopwatch.elapsedMilliseconds,
+            'scanTotalMs': _scanTotalStopwatch?.elapsedMilliseconds,
+            'apiCorrelationId': result['correlationId'],
+            'apiPerformance': result['performance'],
+            'success': result['success'],
+          });
+          return result;
+        },
+      );
+    } catch (e, stackTrace) {
+      debugPrint('[ExamScanner] GABARITO: erro no processamento: $e');
+      debugPrint('$stackTrace');
+      _isCapturingPhoto = false;
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _friendlyOmrError(e),
+          ),
+          backgroundColor: Colors.red,
+        ),
+      );
+      setState(() => _currentState = ScannerState.takingPhoto);
+      return;
+    }
 
     _isCapturingPhoto = false;
 
@@ -805,6 +1257,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
     bool isSaving = false;
     double? finalReturnedGrade;
+    final isFileDiagnosticSaveBlocked = kIsWeb && kOmrFileDiagnostic;
 
     final schoolName =
         Provider.of<SchoolProvider>(context, listen: false).school?.name ??
@@ -1011,6 +1464,28 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         detail['isCorrect'] == true;
                                     final marked = detail['studentMarked'];
                                     final correctAns = detail['correctAnswer'];
+                                    final status = detail['status']
+                                        ?.toString()
+                                        .toLowerCase();
+                                    final debugStatus = detail['debugStatus']
+                                        ?.toString()
+                                        .toLowerCase();
+                                    final hasLowConfidence =
+                                        status == 'ambiguous' ||
+                                            status == 'low_confidence' ||
+                                            debugStatus == 'low_confidence';
+                                    final hasMultipleMarking =
+                                        status == 'multiple' ||
+                                            debugStatus == 'multiple';
+                                    final subtitleText = marked == null
+                                        ? (hasMultipleMarking
+                                            ? 'Multipla marcacao'
+                                            : 'Em branco')
+                                        : (hasLowConfidence
+                                            ? 'Marcou $marked - baixa confianca. Revisar manualmente.'
+                                            : (isCorrect
+                                                ? 'Acertou (Marcou $marked)'
+                                                : 'Errou (Marcou $marked, era $correctAns)'));
 
                                     return ListTile(
                                       dense: true,
@@ -1033,11 +1508,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         ),
                                       ),
                                       subtitle: Text(
-                                        marked == null
-                                            ? 'Em branco'
-                                            : (isCorrect
-                                                ? 'Acertou (Marcou $marked)'
-                                                : 'Errou (Marcou $marked, era $correctAns)'),
+                                        subtitleText,
                                         style: TextStyle(
                                           color: isCorrect
                                               ? Colors.green
@@ -1057,6 +1528,29 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                 ),
                               ),
                             ],
+                          ),
+                        ),
+                      ],
+                      if (isFileDiagnosticSaveBlocked) ...[
+                        SizedBox(height: 12.h),
+                        Container(
+                          width: double.infinity,
+                          padding: EdgeInsets.all(12.w),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(12.r),
+                            border: Border.all(
+                              color: Colors.orange.withOpacity(0.35),
+                            ),
+                          ),
+                          child: Text(
+                            'Modo diagnostico por arquivo: processamento concluido sem gravar nota.',
+                            style: TextStyle(
+                              color: Colors.orange[800],
+                              fontSize: 12.sp,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
                         ),
                       ],
@@ -1085,7 +1579,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                           SizedBox(width: 15.w),
                           Expanded(
                             child: ElevatedButton(
-                              onPressed: isSaving
+                              onPressed: isSaving || isFileDiagnosticSaveBlocked
                                   ? null
                                   : () async {
                                       final String input = gradeController.text
@@ -1170,9 +1664,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         strokeWidth: 2,
                                       ),
                                     )
-                                  : const Text(
-                                      "Confirmar",
-                                      style: TextStyle(
+                                  : Text(
+                                      isFileDiagnosticSaveBlocked
+                                          ? "Salvar bloqueado"
+                                          : "Confirmar",
+                                      style: const TextStyle(
                                         fontWeight: FontWeight.bold,
                                       ),
                                     ),
@@ -1373,7 +1869,45 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                       textAlign: TextAlign.center,
                     ),
                   ),
-                  if (needsWebQrStart) ...[
+                  if (kIsWeb && kOmrFileDiagnostic) ...[
+                    SizedBox(height: 14.h),
+                    Container(
+                      margin: EdgeInsets.symmetric(horizontal: 24.w),
+                      padding: EdgeInsets.all(12.w),
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(16.r),
+                        border: Border.all(
+                          color: Colors.orangeAccent.withOpacity(0.45),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          TextField(
+                            controller: _diagnosticQrUuidController,
+                            style: const TextStyle(color: Colors.white),
+                            decoration: InputDecoration(
+                              hintText: 'Cole o UUID extraido do QR',
+                              hintStyle: TextStyle(color: Colors.grey[400]),
+                              isDense: true,
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.08),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(10.r),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
+                          SizedBox(height: 10.h),
+                          ElevatedButton.icon(
+                            onPressed: _runFileQrDiagnostic,
+                            icon: const Icon(PhosphorIcons.file_search),
+                            label: const Text('Validar QR por arquivo'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ] else if (needsWebQrStart) ...[
                     SizedBox(height: 14.h),
                     ElevatedButton.icon(
                       onPressed:
@@ -1420,9 +1954,11 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         final webCameraReady = kIsWeb && _webCameraController.isStarted;
         final webCameraBusy = kIsWeb && _webCameraController.isStarting;
         final photoInstruction = kIsWeb
-            ? (webCameraReady
-                ? 'Encaixe as 4 ancoras pretas dentro da linha verde'
-                : 'Toque em Iniciar camera para alinhar o gabarito dentro da mascara')
+            ? (kOmrFileDiagnostic
+                ? 'Selecione a imagem local do gabarito para o teste web.'
+                : webCameraReady
+                    ? 'Encaixe as 4 ancoras pretas dentro da linha verde'
+                    : 'Toque em Iniciar camera para alinhar o gabarito dentro da mascara')
             : 'Encaixe as 4 ancoras pretas dentro da linha verde';
 
         if (kIsWeb) {
@@ -1525,7 +2061,19 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                   if (kIsWeb)
                     Column(
                       children: [
-                        if (!webCameraReady)
+                        if (kOmrFileDiagnostic)
+                          ElevatedButton.icon(
+                            onPressed: _isCapturingPhoto
+                                ? null
+                                : _pickPhotoFromGalleryFallback,
+                            icon: const Icon(PhosphorIcons.image),
+                            label: Text(
+                              _isCapturingPhoto
+                                  ? 'Processando...'
+                                  : 'Selecionar imagem de gabarito',
+                            ),
+                          )
+                        else if (!webCameraReady)
                           ElevatedButton.icon(
                             onPressed: webCameraBusy || _isCapturingPhoto
                                 ? null
@@ -1573,20 +2121,22 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                               ),
                             ),
                           ),
-                        SizedBox(height: 14.h),
-                        TextButton.icon(
-                          onPressed: _isCapturingPhoto
-                              ? null
-                              : _pickPhotoFromGalleryFallback,
-                          icon: const Icon(
-                            PhosphorIcons.image,
-                            color: Colors.white,
+                        if (!kOmrFileDiagnostic) ...[
+                          SizedBox(height: 14.h),
+                          TextButton.icon(
+                            onPressed: _isCapturingPhoto
+                                ? null
+                                : _pickPhotoFromGalleryFallback,
+                            icon: const Icon(
+                              PhosphorIcons.image,
+                              color: Colors.white,
+                            ),
+                            label: const Text(
+                              "Escolher da galeria (fallback)",
+                              style: TextStyle(color: Colors.white),
+                            ),
                           ),
-                          label: const Text(
-                            "Escolher da galeria (fallback)",
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        ),
+                        ],
                       ],
                     )
                   else
