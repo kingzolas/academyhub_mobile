@@ -8,48 +8,118 @@ workflows:
       xcode: latest
       cocoapods: default
     scripts:
-      - name: Baixar dependencias
+      - name: Preparar Flutter iOS
         script: |
+          flutter clean
           flutter pub get
-      
-      - name: Instalar Pods e Configurar iOS 15
+          flutter build ios --release --no-codesign --config-only
+
+      - name: Forcar iOS 15 e instalar Pods
         script: |
-          cd ios
-          # Se o Podfile não existir, cria um básico
-          if [ ! -f Podfile ]; then
-            flutter create .
-          fi
-          
-          # FORÇA A VERSÃO MÍNIMA PARA 15.0 NO PODFILE
-          # Tenta substituir a linha existente
-          sed -i '' "s/^platform :ios.*/platform :ios, '15.0'/" Podfile || sed -i "s/^platform :ios.*/platform :ios, '15.0'/" Podfile
-          
-          # Se a linha não existia, adiciona no topo
-          if ! grep -q "platform :ios, '15.0'" Podfile; then
-             echo "platform :ios, '15.0'" | cat - Podfile > temp && mv temp Podfile
+          set -euo pipefail
+
+          IOS_TARGET="15.0"
+          BUNDLE_ID="br.com.eyecode.academyhubmobile"
+
+          if [ ! -f ios/Podfile ]; then
+            echo "Erro: ios/Podfile nao encontrado. O Podfile deve estar versionado."
+            exit 1
           fi
 
-          # Instala as dependências
+          ruby <<'RUBY'
+          ios_target = '15.0'
+          bundle_id = 'br.com.eyecode.academyhubmobile'
+
+          podfile_path = 'ios/Podfile'
+          podfile = File.read(podfile_path)
+          if podfile.match?(/^\s*#?\s*platform :ios,/)
+            podfile.sub!(/^\s*#?\s*platform :ios, ['"][^'"]+['"]/, "platform :ios, '#{ios_target}'")
+          else
+            podfile = "platform :ios, '#{ios_target}'\n" + podfile
+          end
+          File.write(podfile_path, podfile)
+
+          pbxproj_path = 'ios/Runner.xcodeproj/project.pbxproj'
+          pbxproj = File.read(pbxproj_path)
+          pbxproj.gsub!(/IPHONEOS_DEPLOYMENT_TARGET = (12\.0|13\.0|14\.0);/, "IPHONEOS_DEPLOYMENT_TARGET = #{ios_target};")
+          pbxproj.gsub!(/PRODUCT_BUNDLE_IDENTIFIER = com\.example\.academyhubMobile\.RunnerTests;/, "PRODUCT_BUNDLE_IDENTIFIER = #{bundle_id}.RunnerTests;")
+          pbxproj.gsub!(/PRODUCT_BUNDLE_IDENTIFIER = com\.example\.academyhubMobile;/, "PRODUCT_BUNDLE_IDENTIFIER = #{bundle_id};")
+          File.write(pbxproj_path, pbxproj)
+          RUBY
+
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion ${IOS_TARGET}" ios/Flutter/AppFrameworkInfo.plist
+
+          cd ios
           pod install --repo-update
           cd ..
 
+      - name: Validar iOS 15 antes do build
+        script: |
+          set -euo pipefail
+
+          echo "Podfile platform:"
+          grep -n "platform :ios" ios/Podfile
+
+          echo "AppFrameworkInfo MinimumOSVersion:"
+          /usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" ios/Flutter/AppFrameworkInfo.plist
+
+          echo "Deployment targets:"
+          grep -n "IPHONEOS_DEPLOYMENT_TARGET" ios/Runner.xcodeproj/project.pbxproj
+
+          echo "Bundle identifiers:"
+          grep -n "PRODUCT_BUNDLE_IDENTIFIER" ios/Runner.xcodeproj/project.pbxproj
+
+          if grep -Eq "IPHONEOS_DEPLOYMENT_TARGET = (12\.0|13\.0|14\.0)" ios/Runner.xcodeproj/project.pbxproj; then
+            echo "Erro: deployment target abaixo de 15.0 encontrado no project.pbxproj"
+            exit 1
+          fi
+
+          if ! grep -q "platform :ios, '15.0'" ios/Podfile; then
+            echo "Erro: Podfile nao esta em iOS 15.0"
+            exit 1
+          fi
+
+          MIN_IOS=$(/usr/libexec/PlistBuddy -c "Print :MinimumOSVersion" ios/Flutter/AppFrameworkInfo.plist)
+          if [ "$MIN_IOS" != "15.0" ]; then
+            echo "Erro: AppFrameworkInfo.plist esta em ${MIN_IOS}, esperado 15.0"
+            exit 1
+          fi
+
+          if grep -q "com.example.academyhubMobile" ios/Runner.xcodeproj/project.pbxproj; then
+            echo "Erro: Bundle Identifier generico ainda encontrado"
+            exit 1
+          fi
+
       - name: Build iOS .app (Sem Assinatura)
         script: |
-          # Compila o app sem pedir certificado da Apple
-          flutter build ios --release --no-codesign
+          set -euo pipefail
+
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+          mkdir -p build/ios/iphoneos
+          rm -rf build/ios/iphoneos/Runner.app
+          cp -R build/ios/Build/Products/Release-iphoneos/Runner.app build/ios/iphoneos/Runner.app
 
       - name: Injetar Firebase e Gerar .ipa
         script: |
-          # Entra na pasta onde o app foi compilado
+          set -euo pipefail
+
           cd build/ios/iphoneos
-          
-          # --- [CORREÇÃO CRÍTICA PARA TELA BRANCA] ---
-          # Copia o arquivo da pasta do projeto para DENTRO do app compilado
-          # Isso garante que o Firebase ache as credenciais mesmo sem registro no Xcode
+
           echo "Injetando GoogleService-Info.plist..."
           cp ../../../ios/Runner/GoogleService-Info.plist Runner.app/GoogleService-Info.plist
-          
-          # Cria a estrutura do IPA para o AltStore
+
+          rm -rf Payload academyhub.ipa
           mkdir Payload
           mv Runner.app Payload
           zip -r academyhub.ipa Payload
