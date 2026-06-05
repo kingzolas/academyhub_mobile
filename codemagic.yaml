@@ -14,6 +14,42 @@ workflows:
           flutter pub get
           flutter build ios --release --no-codesign --config-only
 
+      - name: Validar pacote local flutter_phosphor_icons
+        script: |
+          set -euo pipefail
+
+          echo "Dependencia resolvida:"
+          flutter pub deps | grep flutter_phosphor_icons || true
+
+          echo "Bloco do pubspec.lock:"
+          grep -n -A 8 "flutter_phosphor_icons" pubspec.lock
+
+          PHOSPHOR_LOCK_BLOCK="$(grep -A 8 "^  flutter_phosphor_icons:" pubspec.lock || true)"
+          if [ -z "$PHOSPHOR_LOCK_BLOCK" ]; then
+            echo "Erro: flutter_phosphor_icons nao encontrado no pubspec.lock"
+            exit 1
+          fi
+
+          if echo "$PHOSPHOR_LOCK_BLOCK" | grep -Eq "source: hosted|hosted|pub\.dev"; then
+            echo "Erro: flutter_phosphor_icons ainda esta vindo de hosted/pub.dev"
+            exit 1
+          fi
+
+          if ! echo "$PHOSPHOR_LOCK_BLOCK" | grep -q "source: path"; then
+            echo "Erro: flutter_phosphor_icons nao esta usando source: path"
+            exit 1
+          fi
+
+          if ! echo "$PHOSPHOR_LOCK_BLOCK" | grep -q 'path: "packages/flutter_phosphor_icons"'; then
+            echo "Erro: flutter_phosphor_icons nao esta apontando para packages/flutter_phosphor_icons"
+            exit 1
+          fi
+
+          if grep -RE "PhosphorIconsData|class .* extends IconData" packages/flutter_phosphor_icons/lib; then
+            echo "Erro: pacote local flutter_phosphor_icons ainda estende IconData"
+            exit 1
+          fi
+
       - name: Forcar iOS 15 e instalar Pods
         script: |
           set -euo pipefail
