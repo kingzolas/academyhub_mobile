@@ -3,9 +3,12 @@
 import 'dart:convert';
 
 import 'package:academyhub_mobile/config/api_config.dart';
+import 'package:academyhub_mobile/model/activity_correction_model.dart';
 import 'package:academyhub_mobile/model/exam_model.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/school_provider.dart';
+import 'package:academyhub_mobile/screens/teacher/activity_correction_screen.dart';
+import 'package:academyhub_mobile/services/activity_correction_service.dart';
 import 'package:academyhub_mobile/services/exam_service.dart';
 // 👇 Import do pop-up inteligente!
 import 'package:academyhub_mobile/widgets/scanner_operation_dialog.dart';
@@ -153,6 +156,8 @@ class ExamScannerScreen extends StatefulWidget {
 }
 
 class _ExamScannerScreenState extends State<ExamScannerScreen> {
+  final ActivityCorrectionService _activityCorrectionService =
+      ActivityCorrectionService();
   final MobileScannerController _scannerController = MobileScannerController(
     detectionSpeed: DetectionSpeed.noDuplicates,
     facing: CameraFacing.back,
@@ -375,6 +380,83 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     return message;
   }
 
+  bool _isActivityQr(String qrCodeValue) {
+    return qrCodeValue.trim().startsWith('AH-ACTIVITY-1:');
+  }
+
+  String _friendlyActivityCorrectionError(Object error) {
+    final message =
+        error.toString().replaceFirst(RegExp(r'^Exception:\s*'), '').trim();
+
+    if (message.isEmpty) {
+      return 'Nao foi possivel carregar a atividade.';
+    }
+
+    return message;
+  }
+
+  Future<void> _openActivityCorrectionFlow({
+    required String qrCodePayload,
+    String? correlationId,
+  }) async {
+    final token = Provider.of<AuthProvider>(context, listen: false).token;
+    if (token == null) {
+      await _resetToQrMode();
+      return;
+    }
+
+    _logOmrPerformance('activity_qr_resolve_started', {
+      'correlationId': correlationId,
+      'qrCodePayload': qrCodePayload,
+    });
+
+    final resolveResult =
+        await showScannerOperationDialog<ActivityQrResolveResult>(
+      context: context,
+      loadingTitle: 'Carregando atividade...',
+      loadingMessage: 'Buscando dados da atividade impressa.',
+      loadingDetail: 'Preparando a correção qualitativa.',
+      successTitle: 'Atividade encontrada!',
+      successMessage: 'Abrindo a tela de correção.',
+      successVisibleDuration: const Duration(milliseconds: 900),
+      operation: () async {
+        try {
+          return await _activityCorrectionService.resolveQr(
+            token: token,
+            qrCodePayload: qrCodePayload,
+          );
+        } catch (error) {
+          throw Exception(_friendlyActivityCorrectionError(error));
+        }
+      },
+    );
+
+    if (resolveResult == null) {
+      await _resetToQrMode();
+      return;
+    }
+
+    if (!mounted) return;
+
+    final saved = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ActivityCorrectionScreen(resolveResult: resolveResult),
+      ),
+    );
+
+    if (!mounted) return;
+    await _resetToQrMode();
+
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Correcao da atividade salva com sucesso.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
+
   Future<void> _runFileQrDiagnostic() async {
     final qrCodeUuid = _diagnosticQrUuidController.text.trim();
     if (qrCodeUuid.isEmpty || _currentState != ScannerState.scanningQR) {
@@ -398,6 +480,13 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     if (!mounted) return;
     final token = Provider.of<AuthProvider>(context, listen: false).token;
+    if (_isActivityQr(qrCodeUuid)) {
+      await _openActivityCorrectionFlow(
+        qrCodePayload: qrCodeUuid,
+        correlationId: correlationId,
+      );
+      return;
+    }
 
     final sheetData = await showScannerOperationDialog<Map<String, dynamic>>(
       context: context,
@@ -486,6 +575,13 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     if (!mounted) return;
     final token = Provider.of<AuthProvider>(context, listen: false).token;
+    if (_isActivityQr(qrCodeUuid)) {
+      await _openActivityCorrectionFlow(
+        qrCodePayload: qrCodeUuid,
+        correlationId: correlationId,
+      );
+      return;
+    }
 
     final sheetData = await showScannerOperationDialog<Map<String, dynamic>>(
       context: context,

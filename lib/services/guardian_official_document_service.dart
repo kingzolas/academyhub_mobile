@@ -19,39 +19,10 @@ class GuardianOfficialDocumentService {
   Future<List<GuardianOfficialDocumentCatalogItem>> getCatalog({
     required String token,
   }) async {
-    try {
-      final data = await _jsonWithFallback(
-        method: 'GET',
-        token: token,
-        paths: const [
-          '/guardian-auth/official-documents/catalog',
-          '/official-documents/catalog',
-          '/official-document-types/guardian',
-        ],
-      );
-
-      final rawItems = _extractList(data, const [
-        'documentTypes',
-        'types',
-        'catalog',
-        'items',
-        'data',
-      ]);
-
-      final items = rawItems
-          .whereType<Map<String, dynamic>>()
-          .map(GuardianOfficialDocumentCatalogItem.fromJson)
-          .where((item) => item.type.trim().isNotEmpty)
-          .toList();
-
-      return items.isEmpty
-          ? GuardianOfficialDocumentCatalogItem.defaults
-          : items;
-    } on GuardianSessionExpiredException {
-      rethrow;
-    } catch (_) {
-      return GuardianOfficialDocumentCatalogItem.defaults;
-    }
+    // The API does not expose a guardian catalog endpoint yet. Falling back to
+    // /official-documents/catalog sends a guardian token to a staff-only route
+    // and turns its expected 401 into a false session expiration.
+    return GuardianOfficialDocumentCatalogItem.defaults;
   }
 
   Future<List<GuardianOfficialDocumentRequest>> getRequests({
@@ -65,9 +36,6 @@ class GuardianOfficialDocumentService {
       queryParameters: queryParameters,
       paths: const [
         '/official-document-requests/guardian/mine',
-        '/guardian-auth/official-document-requests',
-        '/official-document-requests/guardian',
-        '/document-requests/guardian',
       ],
     );
 
@@ -106,8 +74,6 @@ class GuardianOfficialDocumentService {
       body: body,
       paths: const [
         '/official-document-requests/guardian',
-        '/guardian-auth/official-document-requests',
-        '/official-document-requests',
       ],
     );
 
@@ -132,9 +98,6 @@ class GuardianOfficialDocumentService {
       queryParameters: queryParameters,
       paths: const [
         '/official-documents/guardian/mine',
-        '/guardian-auth/official-documents',
-        '/official-documents/guardian',
-        '/issued-documents/guardian',
       ],
     );
 
@@ -160,9 +123,6 @@ class GuardianOfficialDocumentService {
     final normalizedFileUrl = (fileUrl ?? '').trim();
     final paths = [
       '/official-documents/guardian/mine/$documentId/file',
-      '/official-documents/guardian/mine/$documentId/download',
-      '/guardian-auth/official-documents/$documentId/download',
-      '/official-documents/$documentId/download',
     ];
 
     Object? lastError;
@@ -227,8 +187,6 @@ class GuardianOfficialDocumentService {
   }) async {
     final paths = [
       '/official-documents/guardian/mine/$documentId/downloaded',
-      '/guardian-auth/official-documents/$documentId/downloaded',
-      '/official-documents/$documentId/downloaded',
     ];
 
     for (final path in paths) {

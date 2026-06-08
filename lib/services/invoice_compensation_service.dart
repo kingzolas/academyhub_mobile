@@ -26,8 +26,6 @@ class InvoiceCompensationService {
     };
 
     print('🔵 [Service] POST: $uri');
-    print(
-        '🔵 [Service] Headers: Authorization: Bearer ${token.substring(0, 15)}...');
     print('🔵 [Service] Payload enviado: ${jsonEncode(body)}');
 
     final res = await http.post(

@@ -220,8 +220,6 @@ class AuthProvider with ChangeNotifier {
       _sessionPrincipal = isStudent ? 'student' : 'staff';
 
       debugPrint('✅ [AuthProvider] Login bem-sucedido! Objeto User criado.');
-      debugPrint('   - Token recebido: ${_token?.substring(0, 15)}...');
-
       await _persistStandardSession(rawUser);
       debugPrint(
           '💾 [AuthProvider] Token e usuário salvos no SharedPreferences.');
@@ -376,6 +374,10 @@ class AuthProvider with ChangeNotifier {
 
     _isExpiringGuardianSession = true;
     try {
+      final messenger = context != null && context.mounted
+          ? ScaffoldMessenger.maybeOf(context)
+          : null;
+
       debugPrint(
           '[AuthProvider] Encerrando sessao de responsavel invalida: ${reason ?? 'sem detalhe'}');
 
@@ -399,6 +401,13 @@ class AuthProvider with ChangeNotifier {
 
       if (context != null && context.mounted) {
         context.go('/?mode=guardian');
+        messenger
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('Sua sessão expirou. Faça login novamente.'),
+            ),
+          );
       }
 
       notifyListeners();
