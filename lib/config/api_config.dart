@@ -48,4 +48,14 @@ class ApiConfig {
       'https://school-management-api-76ef.onrender.com';
   // Esta é a URL para o WebSocket (WSS = WebSocket Seguro)
   static const String wsUrl = 'wss://school-management-api-76ef.onrender.com';
+
+  // static const String apiUrl = '$baseUrl/api';
+
+  // static const String frontendUrl = 'https://academyhub-mobile.netlify.app/';
+
+  // static const String baseUrl =
+  //     'https://weightiest-ironically-marta.ngrok-free.dev';
+  // // Esta é a URL para o WebSocket (WSS = WebSocket Seguro)
+  // static const String wsUrl =
+  //     'wss://weightiest-ironically-marta.ngrok-free.dev';
 }
