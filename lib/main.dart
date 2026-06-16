@@ -220,109 +220,107 @@ class ErrorApp extends StatelessWidget {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  static final GoRouter _router = GoRouter(
+    navigatorKey: navigatorKey,
+    initialLocation: '/',
+    errorBuilder: (context, state) => Scaffold(
+      body: Center(child: Text('Página não encontrada: ${state.error}')),
+    ),
+    routes: [
+      GoRoute(
+        path: '/matricula-web/:schoolId',
+        builder: (context, state) {
+          final schoolId = state.pathParameters['schoolId'];
+          final onlyMinors =
+              state.uri.queryParameters['onlyMinors']?.toLowerCase() == 'true';
+          return PublicRegistrationScreen(
+            schoolId: schoolId!,
+            onlyMinors: onlyMinors,
+          );
+        },
+      ),
+      GoRoute(
+        path: '/pagar/:token',
+        builder: (context, state) {
+          final token = state.pathParameters['token']!;
+          return NegotiationPaymentScreen(negotiationToken: token);
+        },
+      ),
+
+      // =========================================================
+      // 🌟 ROTA PARA A TELA DE MENSALIDADES (DESTINO DO MAGIC LINK)
+      // =========================================================
+      GoRoute(
+        path: '/aluno/faturas',
+        builder: (context, state) => const StudentInvoicesScreen(),
+      ),
+
+      // =========================================================
+      // 🌟 NOVA ROTA: CAPTURA DO MAGIC LINK
+      // =========================================================
+      GoRoute(
+        path: '/auth/student/access-by-token',
+        builder: (context, state) {
+          final token = state.uri.queryParameters['token'];
+
+          if (token == null || token.isEmpty) {
+            return const Scaffold(
+              body: Center(
+                  child: Text('Token de acesso não fornecido ou inválido.')),
+            );
+          }
+
+          return StudentTokenHandlerScreen(token: token);
+        },
+      ),
+      // =========================================================
+
+      GoRoute(
+        path: '/aluno/prova/:assessmentId',
+        builder: (context, state) {
+          final assessmentId = state.pathParameters['assessmentId'];
+          if (assessmentId == null) {
+            return const Scaffold(body: Center(child: Text("ID inválido")));
+          }
+          return StudentExamLoginScreen(assessmentId: assessmentId);
+        },
+        routes: [
+          GoRoute(
+            path: 'execucao',
+            builder: (context, state) {
+              final assessmentId = state.pathParameters['assessmentId']!;
+              return StudentExamExecutionScreen(assessmentId: assessmentId);
+            },
+          ),
+          GoRoute(
+            path: 'resultado',
+            builder: (context, state) {
+              final extras = state.extra as Map<String, dynamic>?;
+              if (extras == null) {
+                return const Scaffold(
+                    body: Center(
+                        child: Text("Dados do resultado não encontrados.")));
+              }
+              return StudentExamResultScreen(
+                assessment: extras['assessment'],
+                attempt: extras['attempt'],
+              );
+            },
+          ),
+        ],
+      ),
+      GoRoute(
+        path: '/',
+        builder: (context, state) => AuthWrapper(
+          startInGuardianMode: state.uri.queryParameters['mode'] == 'guardian',
+        ),
+      ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
     final themeProvider = Provider.of<ThemeProvider>(context);
-
-    final GoRouter _router = GoRouter(
-      navigatorKey: navigatorKey,
-      initialLocation: '/',
-      errorBuilder: (context, state) => Scaffold(
-        body: Center(child: Text('Página não encontrada: ${state.error}')),
-      ),
-      routes: [
-        GoRoute(
-          path: '/matricula-web/:schoolId',
-          builder: (context, state) {
-            final schoolId = state.pathParameters['schoolId'];
-            final onlyMinors =
-                state.uri.queryParameters['onlyMinors']?.toLowerCase() ==
-                    'true';
-            return PublicRegistrationScreen(
-              schoolId: schoolId!,
-              onlyMinors: onlyMinors,
-            );
-          },
-        ),
-        GoRoute(
-          path: '/pagar/:token',
-          builder: (context, state) {
-            final token = state.pathParameters['token']!;
-            return NegotiationPaymentScreen(negotiationToken: token);
-          },
-        ),
-
-        // =========================================================
-        // 🌟 ROTA PARA A TELA DE MENSALIDADES (DESTINO DO MAGIC LINK)
-        // =========================================================
-        GoRoute(
-          path: '/aluno/faturas',
-          builder: (context, state) => const StudentInvoicesScreen(),
-        ),
-
-        // =========================================================
-        // 🌟 NOVA ROTA: CAPTURA DO MAGIC LINK
-        // =========================================================
-        GoRoute(
-          path: '/auth/student/access-by-token',
-          builder: (context, state) {
-            final token = state.uri.queryParameters['token'];
-
-            if (token == null || token.isEmpty) {
-              return const Scaffold(
-                body: Center(
-                    child: Text('Token de acesso não fornecido ou inválido.')),
-              );
-            }
-
-            return StudentTokenHandlerScreen(token: token);
-          },
-        ),
-        // =========================================================
-
-        GoRoute(
-          path: '/aluno/prova/:assessmentId',
-          builder: (context, state) {
-            final assessmentId = state.pathParameters['assessmentId'];
-            if (assessmentId == null) {
-              return const Scaffold(body: Center(child: Text("ID inválido")));
-            }
-            return StudentExamLoginScreen(assessmentId: assessmentId);
-          },
-          routes: [
-            GoRoute(
-              path: 'execucao',
-              builder: (context, state) {
-                final assessmentId = state.pathParameters['assessmentId']!;
-                return StudentExamExecutionScreen(assessmentId: assessmentId);
-              },
-            ),
-            GoRoute(
-              path: 'resultado',
-              builder: (context, state) {
-                final extras = state.extra as Map<String, dynamic>?;
-                if (extras == null) {
-                  return const Scaffold(
-                      body: Center(
-                          child: Text("Dados do resultado não encontrados.")));
-                }
-                return StudentExamResultScreen(
-                  assessment: extras['assessment'],
-                  attempt: extras['attempt'],
-                );
-              },
-            ),
-          ],
-        ),
-        GoRoute(
-          path: '/',
-          builder: (context, state) => AuthWrapper(
-            startInGuardianMode:
-                state.uri.queryParameters['mode'] == 'guardian',
-          ),
-        ),
-      ],
-    );
 
     return LayoutBuilder(builder: (context, constraints) {
       final bool isMobile = constraints.maxWidth < 768;

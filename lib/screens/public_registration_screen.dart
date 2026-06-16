@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:academyhub_mobile/model/public_enrollment_offer_model.dart';
 import 'package:academyhub_mobile/model/public_registration_class_model.dart';
+import 'package:academyhub_mobile/providers/theme_provider.dart';
 import 'package:academyhub_mobile/services/public_registration_service.dart';
 import 'package:academyhub_mobile/util/parauapebas_neighborhoods.dart';
 import 'package:academyhub_mobile/widgets/report_card_operation_dialog.dart';
@@ -14,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class PublicRegistrationScreen extends StatefulWidget {
@@ -1561,6 +1563,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   @override
   Widget build(BuildContext context) {
     final isSuccess = _currentStep == _successStep;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 320),
@@ -1570,7 +1573,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           ? _buildInitialSplash()
           : Scaffold(
               key: const ValueKey('registration-form'),
-              backgroundColor: const Color(0xFFF6F8FA),
+              backgroundColor:
+                  isDark ? const Color(0xFF0F172A) : const Color(0xFFF6F8FA),
               body: SafeArea(
                 child: Column(
                   children: [
@@ -1640,6 +1644,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
 
   Widget _buildHeader() {
     final progress = _visibleStepNumber / _visibleStepCount;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final themeProvider = context.read<ThemeProvider>();
 
     return Padding(
       padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 8.h),
@@ -1663,11 +1669,45 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                   style: GoogleFonts.inter(
                     fontSize: 15.sp,
                     fontWeight: FontWeight.w700,
-                    color: const Color(0xFF1E293B),
+                    color: isDark ? Colors.white : const Color(0xFF1E293B),
                   ),
                 ),
               ),
-              SizedBox(width: 48.w),
+              SizedBox(
+                width: 48.w,
+                height: 48.w,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: isDark
+                        ? const Color(0xFF1E293B)
+                        : const Color(0xFFE8F8EF),
+                    borderRadius: BorderRadius.circular(16.r),
+                    border: Border.all(
+                      color: isDark
+                          ? const Color(0xFF334155)
+                          : const Color(0xFFCFF4DD),
+                    ),
+                  ),
+                  child: IconButton(
+                    tooltip:
+                        isDark ? 'Ativar modo claro' : 'Ativar modo escuro',
+                    onPressed: () {
+                      themeProvider.setThemeMode(
+                        isDark ? ThemeMode.light : ThemeMode.dark,
+                      );
+                    },
+                    icon: Icon(
+                      isDark
+                          ? Icons.light_mode_rounded
+                          : Icons.dark_mode_rounded,
+                      color: isDark
+                          ? const Color(0xFFFDE68A)
+                          : const Color(0xFF047857),
+                      size: 22.sp,
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
           SizedBox(height: 6.h),
@@ -1676,7 +1716,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
             child: LinearProgressIndicator(
               minHeight: 6.h,
               value: progress,
-              backgroundColor: const Color(0xFFE2E8F0),
+              backgroundColor:
+                  isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
               valueColor: const AlwaysStoppedAnimation(Color(0xFF00A859)),
             ),
           ),
@@ -1688,7 +1729,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               style: GoogleFonts.inter(
                 fontSize: 12.sp,
                 fontWeight: FontWeight.w600,
-                color: const Color(0xFF64748B),
+                color:
+                    isDark ? const Color(0xFFCBD5E1) : const Color(0xFF64748B),
               ),
             ),
           ),
@@ -3307,11 +3349,17 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildBottomBar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Container(
       padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 18.h),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF111827) : Colors.white,
+        border: Border(
+          top: BorderSide(
+            color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
+          ),
+        ),
       ),
       child: SizedBox(
         width: double.infinity,
@@ -3572,13 +3620,35 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     required List<String> items,
     required ValueChanged<String?> onChanged,
   }) {
+    final dropdownTextStyle = GoogleFonts.inter(
+      fontSize: 15.sp,
+      fontWeight: FontWeight.w600,
+      color: const Color(0xFF0F172A),
+    );
+
     return DropdownButtonFormField<String>(
       initialValue: value,
       isExpanded: true,
+      dropdownColor: Colors.white,
+      iconEnabledColor: const Color(0xFF00A859),
+      iconDisabledColor: const Color(0xFF94A3B8),
+      style: dropdownTextStyle,
       decoration: _inputDecoration(
         label: label,
         icon: Icons.keyboard_arrow_down_rounded,
       ),
+      selectedItemBuilder: (context) {
+        return items.map((item) {
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              item,
+              overflow: TextOverflow.ellipsis,
+              style: dropdownTextStyle,
+            ),
+          );
+        }).toList();
+      },
       items: items
           .map(
             (item) => DropdownMenuItem<String>(
@@ -3586,7 +3656,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               child: Text(
                 item,
                 overflow: TextOverflow.ellipsis,
-                style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                style: dropdownTextStyle,
               ),
             ),
           )
