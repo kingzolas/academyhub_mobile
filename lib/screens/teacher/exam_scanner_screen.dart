@@ -867,22 +867,17 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     _isCapturingPhoto = false;
 
     if (aiResult != null && mounted) {
-      final rawGrade = aiResult['grade'];
-      double? detectedGrade;
-      if (rawGrade != null) {
-        detectedGrade = (rawGrade as num).toDouble();
-      }
-
-      List<dynamic>? details;
-      if (aiResult['correctionDetails'] != null) {
-        details = aiResult['correctionDetails'] as List<dynamic>;
-      }
+      final detectedGrade = _extractOmrGrade(aiResult);
+      final details = _extractCorrectionDetails(aiResult);
+      final summary = _extractCorrectionSummary(aiResult);
 
       await _showGradeConfirmationModal(
         _scannedQrCodeUuid!,
         _scannedSheetData!,
         autoDetectedGrade: detectedGrade,
         correctionDetails: details,
+        correctionSummary: summary,
+        aiResult: aiResult,
       );
     } else {
       if (mounted) setState(() => _currentState = ScannerState.takingPhoto);
@@ -1142,22 +1137,17 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     _isCapturingPhoto = false;
 
     if (aiResult != null && mounted) {
-      final rawGrade = aiResult['grade'];
-      double? detectedGrade;
-      if (rawGrade != null) {
-        detectedGrade = (rawGrade as num).toDouble();
-      }
-
-      List<dynamic>? details;
-      if (aiResult['correctionDetails'] != null) {
-        details = aiResult['correctionDetails'] as List<dynamic>;
-      }
+      final detectedGrade = _extractOmrGrade(aiResult);
+      final details = _extractCorrectionDetails(aiResult);
+      final summary = _extractCorrectionSummary(aiResult);
 
       await _showGradeConfirmationModal(
         _scannedQrCodeUuid!,
         _scannedSheetData!,
         autoDetectedGrade: detectedGrade,
         correctionDetails: details,
+        correctionSummary: summary,
+        aiResult: aiResult,
       );
     } else {
       if (mounted) setState(() => _currentState = ScannerState.takingPhoto);
@@ -1340,11 +1330,102 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     );
   }
 
+  double? _readNumericValue(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value.replaceAll(',', '.'));
+    return null;
+  }
+
+  int? _readIntValue(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
+  }
+
+  double? _extractOmrGrade(Map<String, dynamic> aiResult) {
+    return _readNumericValue(aiResult['grade']) ??
+        _readNumericValue(aiResult['objectiveGrade']) ??
+        _readNumericValue(aiResult['score']);
+  }
+
+  Map<String, dynamic>? _extractCorrectionSummary(
+    Map<String, dynamic> aiResult,
+  ) {
+    for (final key in const [
+      'correctionSummary',
+      'correctionDetailsPayload',
+      'correctionDetails',
+    ]) {
+      final value = aiResult[key];
+      if (value is Map) {
+        return Map<String, dynamic>.from(value);
+      }
+    }
+
+    final questionResults = aiResult['questionResults'];
+    if (questionResults is List) {
+      return {
+        'totalQuestions': aiResult['totalQuestions'],
+        'correctCount': aiResult['correctCount'],
+        'wrongCount': aiResult['wrongCount'],
+        'blankCount': aiResult['blankCount'],
+        'multipleCount': aiResult['multipleCount'],
+        'uncertainCount': aiResult['uncertainCount'],
+        'notDetectedCount': aiResult['notDetectedCount'],
+        'studentAnswers': aiResult['studentAnswers'],
+        'answerKey': aiResult['answerKey'],
+        'questionResults': questionResults,
+      };
+    }
+
+    return null;
+  }
+
+  List<dynamic>? _extractCorrectionDetails(Map<String, dynamic> aiResult) {
+    final legacyDetails = aiResult['correctionDetails'];
+    if (legacyDetails is List) return legacyDetails;
+
+    final summary = _extractCorrectionSummary(aiResult);
+    final questionResults = summary?['questionResults'];
+    if (questionResults is List) return questionResults;
+
+    final topLevelResults = aiResult['questionResults'];
+    if (topLevelResults is List) return topLevelResults;
+
+    return null;
+  }
+
+  List<Map<String, dynamic>>? _extractPersistableAnswers(
+    Map<String, dynamic>? aiResult,
+    List<dynamic>? correctionDetails,
+  ) {
+    if (aiResult == null) return null;
+
+    final persisted = aiResult['persistableAnswers'];
+    if (persisted is List) {
+      return persisted
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+    }
+
+    final source = correctionDetails ?? _extractCorrectionDetails(aiResult);
+    if (source == null) return null;
+
+    return source
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
   Future<double?> _showGradeConfirmationModal(
     String qrCodeUuid,
     Map<String, dynamic> sheetData, {
     double? autoDetectedGrade,
     List<dynamic>? correctionDetails,
+    Map<String, dynamic>? correctionSummary,
+    Map<String, dynamic>? aiResult,
     bool fromManualMode = false,
   }) async {
     final TextEditingController gradeController = TextEditingController(
@@ -1358,6 +1439,23 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     final schoolName =
         Provider.of<SchoolProvider>(context, listen: false).school?.name ??
             'Academy Hub';
+    final totalQuestions =
+        _readIntValue(correctionSummary?['totalQuestions']) ??
+            _readIntValue(aiResult?['totalQuestions']);
+    final correctCount = _readIntValue(correctionSummary?['correctCount']) ??
+        _readIntValue(aiResult?['correctCount']);
+    final wrongCount = _readIntValue(correctionSummary?['wrongCount']) ??
+        _readIntValue(aiResult?['wrongCount']);
+    final blankCount = _readIntValue(correctionSummary?['blankCount']) ??
+        _readIntValue(aiResult?['blankCount']);
+    final multipleCount = _readIntValue(correctionSummary?['multipleCount']) ??
+        _readIntValue(aiResult?['multipleCount']);
+    final uncertainCount =
+        _readIntValue(correctionSummary?['uncertainCount']) ??
+            _readIntValue(aiResult?['uncertainCount']);
+    final notDetectedCount =
+        _readIntValue(correctionSummary?['notDetectedCount']) ??
+            _readIntValue(aiResult?['notDetectedCount']);
 
     await showModalBottomSheet(
       context: context,
@@ -1489,6 +1587,22 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                             ),
                           ),
                         ),
+                      if (correctCount != null && totalQuestions != null)
+                        Padding(
+                          padding: EdgeInsets.only(bottom: 10.h),
+                          child: Center(
+                            child: Text(
+                              'Acertos: $correctCount/$totalQuestions',
+                              style: TextStyle(
+                                color: isDark
+                                    ? Colors.grey[300]
+                                    : Colors.grey[700],
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13.sp,
+                              ),
+                            ),
+                          ),
+                        ),
                       TextField(
                         controller: gradeController,
                         keyboardType: const TextInputType.numberWithOptions(
@@ -1558,7 +1672,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                     final detail = correctionDetails[index];
                                     final isCorrect =
                                         detail['isCorrect'] == true;
-                                    final marked = detail['studentMarked'];
+                                    final marked = detail['studentMarked'] ??
+                                        detail['studentAnswer'] ??
+                                        detail['markedOption'];
                                     final correctAns = detail['correctAnswer'];
                                     final status = detail['status']
                                         ?.toString()
@@ -1568,20 +1684,35 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         .toLowerCase();
                                     final hasLowConfidence =
                                         status == 'ambiguous' ||
+                                            status == 'uncertain' ||
                                             status == 'low_confidence' ||
                                             debugStatus == 'low_confidence';
                                     final hasMultipleMarking =
                                         status == 'multiple' ||
+                                            marked == 'MULTIPLE' ||
                                             debugStatus == 'multiple';
-                                    final subtitleText = marked == null
-                                        ? (hasMultipleMarking
-                                            ? 'Multipla marcacao'
-                                            : 'Em branco')
-                                        : (hasLowConfidence
-                                            ? 'Marcou $marked - baixa confianca. Revisar manualmente.'
-                                            : (isCorrect
-                                                ? 'Acertou (Marcou $marked)'
-                                                : 'Errou (Marcou $marked, era $correctAns)'));
+                                    final isBlank =
+                                        status == 'blank' || marked == null;
+                                    final isNotDetected =
+                                        status == 'not_detected' ||
+                                            marked == 'NOT_DETECTED';
+                                    final earnedPoints =
+                                        detail['earnedPoints'] ??
+                                            detail['points'] ??
+                                            0;
+                                    final subtitleText = hasMultipleMarking
+                                        ? 'Multipla marcacao'
+                                        : (isNotDetected
+                                            ? 'Questao nao detectada com seguranca.'
+                                            : (isBlank
+                                                ? (hasLowConfidence
+                                                    ? 'Leitura incerta. Revisar manualmente.'
+                                                    : 'Em branco')
+                                                : (hasLowConfidence
+                                                    ? 'Marcou $marked - baixa confianca. Revisar manualmente.'
+                                                    : (isCorrect
+                                                        ? 'Acertou (Marcou $marked)'
+                                                        : 'Errou (Marcou $marked, era $correctAns)'))));
 
                                     return ListTile(
                                       dense: true,
@@ -1608,12 +1739,14 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                         style: TextStyle(
                                           color: isCorrect
                                               ? Colors.green
-                                              : Colors.red,
+                                              : (isBlank
+                                                  ? Colors.orange
+                                                  : Colors.red),
                                           fontSize: 12.sp,
                                         ),
                                       ),
                                       trailing: Text(
-                                        '+${detail['earnedPoints']} pts',
+                                        '+$earnedPoints pts',
                                         style: TextStyle(
                                           fontWeight: FontWeight.bold,
                                           color: Colors.grey[600],
@@ -1705,11 +1838,31 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                           context,
                                           listen: false,
                                         ).token;
+                                        final objectiveGrade =
+                                            _readNumericValue(
+                                                  aiResult?['objectiveGrade'],
+                                                ) ??
+                                                finalGrade;
+                                        final answers =
+                                            _extractPersistableAnswers(
+                                          aiResult,
+                                          correctionDetails,
+                                        );
 
                                         await ExamApiService()
                                             .scanAndGradeSheet(
                                           qrCodeUuid: qrCodeUuid,
                                           grade: finalGrade,
+                                          objectiveGrade: objectiveGrade,
+                                          answers: answers,
+                                          correctionDetails: correctionSummary,
+                                          totalQuestions: totalQuestions,
+                                          correctCount: correctCount,
+                                          wrongCount: wrongCount,
+                                          blankCount: blankCount,
+                                          multipleCount: multipleCount,
+                                          uncertainCount: uncertainCount,
+                                          notDetectedCount: notDetectedCount,
                                           token: token!,
                                         );
 

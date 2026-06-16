@@ -275,6 +275,14 @@ class ExamApiService {
     double? objectiveGrade,
     double? dissertativeGrade,
     List<Map<String, dynamic>>? answers,
+    Map<String, dynamic>? correctionDetails,
+    int? totalQuestions,
+    int? correctCount,
+    int? wrongCount,
+    int? blankCount,
+    int? multipleCount,
+    int? uncertainCount,
+    int? notDetectedCount,
     required String token,
   }) async {
     final response = await http.post(
@@ -286,6 +294,14 @@ class ExamApiService {
         if (objectiveGrade != null) 'objectiveGrade': objectiveGrade,
         if (dissertativeGrade != null) 'dissertativeGrade': dissertativeGrade,
         if (answers != null && answers.isNotEmpty) 'answers': answers,
+        if (correctionDetails != null) 'correctionDetails': correctionDetails,
+        if (totalQuestions != null) 'totalQuestions': totalQuestions,
+        if (correctCount != null) 'correctCount': correctCount,
+        if (wrongCount != null) 'wrongCount': wrongCount,
+        if (blankCount != null) 'blankCount': blankCount,
+        if (multipleCount != null) 'multipleCount': multipleCount,
+        if (uncertainCount != null) 'uncertainCount': uncertainCount,
+        if (notDetectedCount != null) 'notDetectedCount': notDetectedCount,
       }),
     );
 
