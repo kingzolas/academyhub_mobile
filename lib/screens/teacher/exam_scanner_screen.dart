@@ -158,6 +158,8 @@ class ExamScannerScreen extends StatefulWidget {
 }
 
 class _ExamScannerScreenState extends State<ExamScannerScreen> {
+  static bool _cameraPermissionGrantedInSession = false;
+
   final ActivityCorrectionService _activityCorrectionService =
       ActivityCorrectionService();
   final MobileScannerController _scannerController = MobileScannerController(
@@ -183,6 +185,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   Uint8List? _webPickedPreviewBytes;
   bool _hasStartedQrScanner = false;
   bool _isStartingQrScanner = false;
+  bool _qrAutoStartFailed = false;
   String? _qrScannerErrorMessage;
   DateTime? _lastSheetVisualLogAt;
   int _correlationSequence = 0;
@@ -197,6 +200,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   bool get _isWebCameraFlow => kIsWeb;
   bool get _usesWebDomOverlayFlow =>
       kIsWeb && _webCameraController.shouldUseDomOverlay;
+  bool get _canAutoStartCamera =>
+      kIsWeb && _cameraPermissionGrantedInSession;
 
   String _newCorrelationId() {
     _correlationSequence += 1;
@@ -252,10 +257,16 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       debugPrint(
         '[ExamScanner] Flutter Web detectado. A camera sera iniciada por acao do usuario.',
       );
+      if (_canAutoStartCamera) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _currentState != ScannerState.scanningQR) return;
+          _startScannerSafely(automatic: true);
+        });
+      }
     }
   }
 
-  Future<void> _startScannerSafely() async {
+  Future<void> _startScannerSafely({bool automatic = false}) async {
     if (_isStartingQrScanner) return;
 
     if (mounted) {
@@ -267,17 +278,26 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     try {
       debugPrint(
-        '[ExamScanner] Iniciando scanner QR. kIsWeb=$kIsWeb',
+        '[CAMERA UX] ${automatic ? 'auto-start QR attempt' : 'manual QR start attempt'} '
+        'kIsWeb=$kIsWeb permissionInSession=$_cameraPermissionGrantedInSession',
       );
       await _scannerController.start();
       if (kIsWeb) {
         scheduleQrPreviewRepair(reason: 'scanner-started');
         showQrPreviewOverlay(reason: 'scanner-started');
       }
-      debugPrint('[ExamScanner] Scanner QR iniciado com sucesso.');
+      debugPrint(
+        automatic
+            ? '[CAMERA UX] auto-start QR success'
+            : '[CAMERA UX] first manual start success',
+      );
       _qrDetectionEvents = 0;
       _lastDetectedQrCode = null;
       _qrScanStopwatch = Stopwatch()..start();
+      if (kIsWeb) {
+        _cameraPermissionGrantedInSession = true;
+        debugPrint('[CAMERA UX] permission/session granted');
+      }
       _logOmrPerformance('qr_scanner_started', {
         'baseUrl': ApiConfig.baseUrl,
         'apiUrl': ApiConfig.apiUrl,
@@ -287,17 +307,22 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       if (mounted) {
         setState(() {
           _hasStartedQrScanner = true;
+          _qrAutoStartFailed = false;
         });
       }
     } catch (e) {
       debugPrint("Erro ao iniciar o scanner de QR: $e");
       if (kIsWeb) {
         hideQrPreviewOverlay(reason: 'scanner-start-error');
+        debugPrint('[CAMERA UX] auto-start failed, showing manual button');
       }
       if (mounted) {
         setState(() {
+          _qrAutoStartFailed = true;
           _qrScannerErrorMessage = kIsWeb
-              ? 'Nao foi possivel acessar a camera. Verifique a permissao da camera no Safari/iPhone e use HTTPS.'
+              ? (automatic
+                  ? 'Toque em Iniciar camera para continuar.'
+                  : 'Nao foi possivel acessar a camera. Verifique a permissao da camera no Safari/iPhone e use HTTPS.')
               : 'Nao foi possivel acessar a camera.';
         });
       }
@@ -317,6 +342,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   Future<void> _initPhotoCamera() async {
     if (kIsWeb) {
       await _webCameraController.start();
+      _cameraPermissionGrantedInSession = true;
       return;
     }
 
@@ -341,6 +367,23 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     }
   }
 
+  void _scheduleSheetCameraAutoStart() {
+    if (!kIsWeb || kOmrFileDiagnostic || !_canAutoStartCamera) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted ||
+          _currentState != ScannerState.takingPhoto ||
+          _webCameraController.isStarted ||
+          _webCameraController.isStarting ||
+          _isCapturingPhoto) {
+        return;
+      }
+
+      debugPrint('[CAMERA UX] auto-start sheet attempt');
+      await _startPhotoCameraFromUserGesture(automatic: true);
+    });
+  }
+
   Future<void> _resetToQrMode() async {
     setState(() => _currentState = ScannerState.processing);
 
@@ -363,8 +406,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       });
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!kIsWeb || _hasStartedQrScanner) {
-          _startScannerSafely();
+        if (!kIsWeb || _canAutoStartCamera) {
+          _startScannerSafely(automatic: kIsWeb);
         }
       });
     }
@@ -552,6 +595,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       _scannedSheetData = sheetData;
       _currentState = ScannerState.takingPhoto;
     });
+    _scheduleSheetCameraAutoStart();
   }
 
   // 👇 LÓGICA ATUALIZADA DO QR CODE COM O NOVO POP-UP
@@ -653,6 +697,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       _scannedSheetData = sheetData;
       _currentState = ScannerState.takingPhoto;
     });
+    _scheduleSheetCameraAutoStart();
 
     debugPrint(
       '[ExamScanner] Avancou para captura do gabarito. kIsWeb=$kIsWeb',
@@ -902,12 +947,16 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     }
   }
 
-  Future<void> _startPhotoCameraFromUserGesture() async {
+  Future<void> _startPhotoCameraFromUserGesture({bool automatic = false}) async {
     if (!kIsWeb || _webCameraController.isStarting || _isCapturingPhoto) {
       return;
     }
 
-    debugPrint('[ExamScanner] GABARITO: botao Iniciar camera clicado.');
+    debugPrint(
+      automatic
+          ? '[CAMERA UX] auto-start sheet attempt'
+          : '[ExamScanner] GABARITO: botao Iniciar camera clicado.',
+    );
     _webPickedPreviewBytes = null;
 
     if (_webCameraController.shouldUseDomOverlay) {
@@ -919,8 +968,19 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     try {
       await _initPhotoCamera();
+      if (_webCameraController.isStarted) {
+        _cameraPermissionGrantedInSession = true;
+        debugPrint(
+          automatic
+              ? '[CAMERA UX] auto-start sheet success'
+              : '[CAMERA UX] manual sheet camera start success',
+        );
+      }
     } catch (e) {
       debugPrint('[ExamScanner] Erro ao iniciar camera web do gabarito: $e');
+      if (automatic) {
+        debugPrint('[CAMERA UX] auto-start failed, showing manual button');
+      }
     }
 
     if (!mounted) return;
@@ -2027,8 +2087,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
     if (_currentState == ScannerState.scanningQR &&
         mounted &&
-        (!kIsWeb || _hasStartedQrScanner)) {
-      _startScannerSafely();
+        (!kIsWeb || _canAutoStartCamera)) {
+      _startScannerSafely(automatic: kIsWeb);
     }
   }
 
@@ -2120,7 +2180,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         final scanWindowSize = constraints.maxWidth * 0.7;
         final horizontalPadding = (constraints.maxWidth - scanWindowSize) / 2;
         final verticalPadding = (constraints.maxHeight - scanWindowSize) / 2;
-        final needsWebQrStart = kIsWeb && !_hasStartedQrScanner;
+        final needsWebQrStart =
+            kIsWeb && (!_hasStartedQrScanner || _qrAutoStartFailed);
         final qrInstruction = needsWebQrStart
             ? 'Toque em Iniciar camera para ler o QR Code dentro da tela.'
             : '1º Passo: Aponte para o QR Code';

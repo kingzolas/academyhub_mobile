@@ -240,7 +240,7 @@ void _createQrPreviewOverlay({required String reason}) {
     ..style.position = 'absolute'
     ..style.left = '24px'
     ..style.right = '24px'
-    ..style.bottom = 'calc(92px + env(safe-area-inset-bottom))'
+    ..style.bottom = 'calc(42px + env(safe-area-inset-bottom))'
     ..style.zIndex = '3'
     ..style.padding = '10px 14px'
     ..style.borderRadius = '18px'
@@ -251,34 +251,11 @@ void _createQrPreviewOverlay({required String reason}) {
     ..style.textAlign = 'center'
     ..style.lineHeight = '1.35';
 
-  final cancelButton = html.ButtonElement()
-    ..type = 'button'
-    ..text = 'Ocultar previa'
-    ..style.position = 'absolute'
-    ..style.left = '50%'
-    ..style.bottom = 'calc(30px + env(safe-area-inset-bottom))'
-    ..style.transform = 'translateX(-50%)'
-    ..style.zIndex = '3'
-    ..style.minWidth = '146px'
-    ..style.height = '46px'
-    ..style.border = '0'
-    ..style.borderRadius = '23px'
-    ..style.backgroundColor = 'rgba(255, 255, 255, 0.18)'
-    ..style.color = '#fff'
-    ..style.fontSize = '14px'
-    ..style.fontWeight = '800';
-
   _qrPreviewSubscriptions.add(
     html.window.onResize.listen((_) => _applyQrFrameSize(frame)),
   );
-  _qrPreviewSubscriptions.add(
-    cancelButton.onClick.listen((event) {
-      event.preventDefault();
-      hideQrPreviewOverlay(reason: 'user-hidden');
-    }),
-  );
 
-  overlay.children.addAll([video, frame, statusText, cancelButton]);
+  overlay.children.addAll([video, frame, statusText]);
   body.append(overlay);
 
   _qrPreviewOverlay = overlay;
