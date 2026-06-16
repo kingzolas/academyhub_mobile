@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:academyhub_mobile/model/public_enrollment_offer_model.dart';
 import 'package:academyhub_mobile/model/public_registration_class_model.dart';
@@ -13,6 +14,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PublicRegistrationScreen extends StatefulWidget {
   final String schoolId;
@@ -30,10 +32,13 @@ class PublicRegistrationScreen extends StatefulWidget {
 }
 
 class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
+  static const int _draftVersion = 1;
   static const int _classStep = 7;
   static const int _offerStep = 8;
   static const int _reviewStep = 9;
   static const int _successStep = 10;
+  static const Duration _draftTtl = Duration(days: 7);
+  static const Duration _draftSaveDebounce = Duration(milliseconds: 700);
 
   final PublicRegistrationService _service = PublicRegistrationService();
 
@@ -193,15 +198,22 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   PublicRegistrationClassModel? _selectedClass;
   List<PublicEnrollmentOfferModel> _availableOffers = [];
   PublicEnrollmentOfferModel? _selectedEnrollmentOffer;
+  Timer? _draftSaveTimer;
+  bool _draftReady = false;
+  bool _isRestoringDraft = false;
+  bool _draftRestoreAttempted = false;
 
   @override
   void initState() {
     super.initState();
+    _addDraftListeners();
     _loadInitialData();
   }
 
   @override
   void dispose() {
+    _draftSaveTimer?.cancel();
+    _removeDraftListeners();
     _studentNameController.dispose();
     _studentBirthController.dispose();
     _studentCpfController.dispose();
@@ -244,6 +256,346 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     _emergencyRelationshipController.dispose();
     _healthGeneralNotesController.dispose();
     super.dispose();
+  }
+
+  String get _draftStorageKey =>
+      'academyhub_public_registration_draft_${widget.schoolId}';
+
+  Map<String, TextEditingController> get _draftTextControllers => {
+        'studentName': _studentNameController,
+        'studentBirth': _studentBirthController,
+        'studentCpf': _studentCpfController,
+        'motherName': _motherNameController,
+        'motherBirth': _motherBirthController,
+        'motherCpf': _motherCpfController,
+        'motherRg': _motherRgController,
+        'motherPhone': _motherPhoneController,
+        'motherEmail': _motherEmailController,
+        'motherProfession': _motherProfessionController,
+        'fatherName': _fatherNameController,
+        'fatherBirth': _fatherBirthController,
+        'fatherCpf': _fatherCpfController,
+        'fatherRg': _fatherRgController,
+        'fatherPhone': _fatherPhoneController,
+        'fatherEmail': _fatherEmailController,
+        'fatherProfession': _fatherProfessionController,
+        'guardianName': _guardianNameController,
+        'guardianBirth': _guardianBirthController,
+        'guardianCpf': _guardianCpfController,
+        'guardianRg': _guardianRgController,
+        'guardianPhone': _guardianPhoneController,
+        'guardianEmail': _guardianEmailController,
+        'guardianProfession': _guardianProfessionController,
+        'cep': _cepController,
+        'street': _streetController,
+        'number': _numberController,
+        'block': _blockController,
+        'lot': _lotController,
+        'complement': _complementController,
+        'healthConditionDetails': _healthConditionDetailsController,
+        'medicationName': _medicationNameController,
+        'medicationGuidance': _medicationGuidanceController,
+        'allergyDetails': _allergyDetailsController,
+        'accessibilityNeeds': _accessibilityNeedsController,
+        'neurodevelopmentalDetails': _neurodevelopmentalDetailsController,
+        'foodRestrictionDetails': _foodRestrictionDetailsController,
+        'emergencyName': _emergencyNameController,
+        'emergencyPhone': _emergencyPhoneController,
+        'emergencyRelationship': _emergencyRelationshipController,
+        'healthGeneralNotes': _healthGeneralNotesController,
+      };
+
+  void _addDraftListeners() {
+    for (final controller in _draftTextControllers.values) {
+      controller.addListener(_scheduleDraftSave);
+    }
+  }
+
+  void _removeDraftListeners() {
+    for (final controller in _draftTextControllers.values) {
+      controller.removeListener(_scheduleDraftSave);
+    }
+  }
+
+  void _scheduleDraftSave() {
+    if (!_draftReady || _isRestoringDraft || !mounted) return;
+    _draftSaveTimer?.cancel();
+    _draftSaveTimer = Timer(_draftSaveDebounce, _saveDraft);
+  }
+
+  void _setDraftState(VoidCallback update) {
+    setState(update);
+    _scheduleDraftSave();
+  }
+
+  Future<void> _saveDraft() async {
+    if (!_draftReady || _isRestoringDraft || !mounted) return;
+
+    final draft = {
+      'version': _draftVersion,
+      'schoolId': widget.schoolId,
+      'currentStep': _currentStep,
+      'updatedAt': DateTime.now().toIso8601String(),
+      'data': _buildDraftData(),
+    };
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_draftStorageKey, json.encode(draft));
+    } catch (_) {
+      // O rascunho é uma conveniência local; falhas não devem bloquear a ficha.
+    }
+  }
+
+  Future<void> _clearDraft() async {
+    _draftSaveTimer?.cancel();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_draftStorageKey);
+    } catch (_) {
+      // Ignora falha de limpeza local para não interferir no envio concluído.
+    }
+  }
+
+  Map<String, dynamic> _buildDraftData() {
+    final data = <String, dynamic>{
+      for (final entry in _draftTextControllers.entries)
+        entry.key: entry.value.text,
+      'selectedNeighborhood': _selectedNeighborhood,
+      'selectedEducationLevel': _selectedEducationLevel,
+      'selectedClassId': _selectedClass?.id,
+      'selectedEnrollmentOfferId': _selectedEnrollmentOffer?.id,
+      'studentGender': _studentGender,
+      'relationship': _relationship,
+      'primaryResponsibleType': _primaryResponsibleType,
+      'otherRelationship': _otherRelationship,
+      'fatherNotInformed': _fatherNotInformed,
+      'hasHealthCondition': _hasHealthCondition,
+      'usesContinuousMedication': _usesContinuousMedication,
+      'hasAllergies': _hasAllergies,
+      'hasDisability': _hasDisability,
+      'hasNeurodevelopmentalCondition': _hasNeurodevelopmentalCondition,
+      'wearsGlasses': _wearsGlasses,
+      'usesGlassesDaily': _usesGlassesDaily,
+      'needsFrontSeat': _needsFrontSeat,
+      'hasFoodRestriction': _hasFoodRestriction,
+      'selectedAllergies': _selectedAllergies.toList(),
+      'selectedDisabilities': _selectedDisabilities.toList(),
+      'selectedNeurodevelopmentalConditions':
+          _selectedNeurodevelopmentalConditions.toList(),
+      'selectedFoodRestrictions': _selectedFoodRestrictions.toList(),
+    };
+
+    return data;
+  }
+
+  Future<void> _restoreDraftIfNeeded() async {
+    if (_draftRestoreAttempted) return;
+    _draftRestoreAttempted = true;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawDraft = prefs.getString(_draftStorageKey);
+      if (rawDraft == null || rawDraft.trim().isEmpty) {
+        _draftReady = true;
+        return;
+      }
+
+      final decoded = json.decode(rawDraft);
+      if (decoded is! Map<String, dynamic> ||
+          decoded['version'] != _draftVersion ||
+          decoded['schoolId']?.toString() != widget.schoolId) {
+        await prefs.remove(_draftStorageKey);
+        _draftReady = true;
+        return;
+      }
+
+      final updatedAt =
+          DateTime.tryParse(decoded['updatedAt']?.toString() ?? '');
+      if (updatedAt == null ||
+          DateTime.now().difference(updatedAt) > _draftTtl) {
+        await prefs.remove(_draftStorageKey);
+        _draftReady = true;
+        return;
+      }
+
+      final data = decoded['data'];
+      if (data is! Map<String, dynamic>) {
+        await prefs.remove(_draftStorageKey);
+        _draftReady = true;
+        return;
+      }
+
+      await _applyDraft(decoded, data);
+    } catch (_) {
+      _draftReady = true;
+    }
+  }
+
+  Future<void> _applyDraft(
+    Map<String, dynamic> draft,
+    Map<String, dynamic> data,
+  ) async {
+    _isRestoringDraft = true;
+    try {
+      final selectedClassId = _readDraftString(data, 'selectedClassId');
+      final selectedOfferId =
+          _readDraftString(data, 'selectedEnrollmentOfferId');
+
+      for (final entry in _draftTextControllers.entries) {
+        if (data.containsKey(entry.key)) {
+          entry.value.text = data[entry.key]?.toString() ?? '';
+        }
+      }
+
+      final selectedClass = _findAvailableClassById(selectedClassId);
+
+      final restoredStep = _normalizedDraftStep(
+        _readDraftInt(draft, 'currentStep'),
+        selectedClass: selectedClass,
+        selectedEducationLevel:
+            _readDraftString(data, 'selectedEducationLevel'),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _selectedNeighborhood = _readDraftString(data, 'selectedNeighborhood');
+        _selectedEducationLevel =
+            _readDraftString(data, 'selectedEducationLevel');
+        _selectedClass = selectedClass;
+        _selectedEnrollmentOffer = null;
+        _studentGender =
+            _readDraftString(data, 'studentGender') ?? _studentGender;
+        _relationship = _readDraftString(data, 'relationship') ?? _relationship;
+        _fatherNotInformed =
+            _readDraftBool(data, 'fatherNotInformed') ?? _fatherNotInformed;
+        _primaryResponsibleType =
+            _readDraftString(data, 'primaryResponsibleType') ??
+                _primaryResponsibleType;
+        if (_primaryResponsibleType == 'father' && _fatherNotInformed) {
+          _primaryResponsibleType = 'mother';
+        }
+        _otherRelationship =
+            _readDraftString(data, 'otherRelationship') ?? _otherRelationship;
+        _hasHealthCondition =
+            _readDraftBool(data, 'hasHealthCondition') ?? _hasHealthCondition;
+        _usesContinuousMedication =
+            _readDraftBool(data, 'usesContinuousMedication') ??
+                _usesContinuousMedication;
+        _hasAllergies = _readDraftBool(data, 'hasAllergies') ?? _hasAllergies;
+        _hasDisability =
+            _readDraftBool(data, 'hasDisability') ?? _hasDisability;
+        _hasNeurodevelopmentalCondition =
+            _readDraftBool(data, 'hasNeurodevelopmentalCondition') ??
+                _hasNeurodevelopmentalCondition;
+        _wearsGlasses = _readDraftBool(data, 'wearsGlasses') ?? _wearsGlasses;
+        _usesGlassesDaily =
+            _readDraftBool(data, 'usesGlassesDaily') ?? _usesGlassesDaily;
+        _needsFrontSeat =
+            _readDraftBool(data, 'needsFrontSeat') ?? _needsFrontSeat;
+        _hasFoodRestriction =
+            _readDraftBool(data, 'hasFoodRestriction') ?? _hasFoodRestriction;
+        _selectedAllergies
+          ..clear()
+          ..addAll(_readDraftStringList(data, 'selectedAllergies'));
+        _selectedDisabilities
+          ..clear()
+          ..addAll(_readDraftStringList(data, 'selectedDisabilities'));
+        _selectedNeurodevelopmentalConditions
+          ..clear()
+          ..addAll(
+            _readDraftStringList(data, 'selectedNeurodevelopmentalConditions'),
+          );
+        _selectedFoodRestrictions
+          ..clear()
+          ..addAll(_readDraftStringList(data, 'selectedFoodRestrictions'));
+        _currentStep = restoredStep;
+      });
+
+      if (_selectedClass != null && selectedOfferId != null) {
+        await _fetchOffersForSelectedClass();
+        if (mounted) {
+          setState(() {
+            _selectedEnrollmentOffer = _findOfferById(selectedOfferId);
+          });
+        }
+      }
+
+      if (mounted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _showMessage(
+              'Rascunho recuperado. Você pode continuar de onde parou.',
+            );
+          }
+        });
+      }
+    } finally {
+      _isRestoringDraft = false;
+      _draftReady = true;
+    }
+  }
+
+  int _normalizedDraftStep(
+    int? value, {
+    required PublicRegistrationClassModel? selectedClass,
+    required String? selectedEducationLevel,
+  }) {
+    var step = value ?? 0;
+    if (step < 0) step = 0;
+    if (step >= _successStep) step = _reviewStep;
+    if (selectedEducationLevel == null && step > _classStep) {
+      return _classStep;
+    }
+    if (selectedClass == null && step > _classStep) {
+      return _classStep;
+    }
+    return step;
+  }
+
+  PublicRegistrationClassModel? _findAvailableClassById(String? id) {
+    if (id == null) return null;
+    for (final classItem in _classes) {
+      if (classItem.id == id && classItem.isAvailable) return classItem;
+    }
+    return null;
+  }
+
+  PublicEnrollmentOfferModel? _findOfferById(String? id) {
+    if (id == null) return null;
+    for (final offer in _availableOffers) {
+      if (offer.id == id) return offer;
+    }
+    return null;
+  }
+
+  String? _readDraftString(Map<String, dynamic> data, String key) {
+    final value = data[key];
+    if (value == null) return null;
+    final text = value.toString();
+    return text.isEmpty ? null : text;
+  }
+
+  bool? _readDraftBool(Map<String, dynamic> data, String key) {
+    final value = data[key];
+    if (value is bool) return value;
+    if (value is String) return value.toLowerCase() == 'true';
+    return null;
+  }
+
+  int? _readDraftInt(Map<String, dynamic> data, String key) {
+    final value = data[key];
+    if (value is int) return value;
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  List<String> _readDraftStringList(Map<String, dynamic> data, String key) {
+    final value = data[key];
+    if (value is! List) return const [];
+    return value
+        .map((item) => item.toString())
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
   }
 
   Future<void> _loadInitialData() async {
@@ -302,6 +654,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           _isLoadingClasses = false;
           _showInitialSplash = false;
         });
+        await _restoreDraftIfNeeded();
       }
     }
   }
@@ -324,9 +677,13 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     if (_isSubmitting) return;
     if (_currentStep == _reviewStep && !_shouldShowOfferStep) {
       setState(() => _currentStep = _classStep);
+      _scheduleDraftSave();
       return;
     }
-    if (_currentStep > 0) setState(() => _currentStep--);
+    if (_currentStep > 0) {
+      setState(() => _currentStep--);
+      _scheduleDraftSave();
+    }
   }
 
   Future<void> _handlePrimaryAction() async {
@@ -336,23 +693,28 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       case 0:
         if (_isLoadingClasses || _classesError != null) return;
         setState(() => _currentStep = 1);
+        _scheduleDraftSave();
         return;
       case 1:
         if (_studentFormKey.currentState?.validate() != true) return;
         setState(() => _currentStep = 2);
+        _scheduleDraftSave();
         return;
       case 2:
         if (_motherFormKey.currentState?.validate() != true) return;
         setState(() => _currentStep = 3);
+        _scheduleDraftSave();
         return;
       case 3:
         if (_fatherFormKey.currentState?.validate() != true) return;
         setState(() => _currentStep = 4);
+        _scheduleDraftSave();
         return;
       case 4:
         if (_responsibleFormKey.currentState?.validate() != true) return;
         if (!_validatePrimaryResponsible()) return;
         setState(() => _currentStep = 5);
+        _scheduleDraftSave();
         return;
       case 5:
         if (_addressFormKey.currentState?.validate() != true) return;
@@ -365,11 +727,13 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           return;
         }
         setState(() => _currentStep = 6);
+        _scheduleDraftSave();
         return;
       case 6:
         if (_healthFormKey.currentState?.validate() != true) return;
         if (!_validateHealthStep()) return;
         setState(() => _currentStep = 7);
+        _scheduleDraftSave();
         return;
       case _classStep:
         if (_selectedClass == null || !_selectedClass!.isAvailable) {
@@ -381,6 +745,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       case _offerStep:
         if (_isLoadingOffers) return;
         setState(() => _currentStep = _reviewStep);
+        _scheduleDraftSave();
         return;
       case _reviewStep:
         await _submitRegistration();
@@ -400,6 +765,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     setState(() {
       _currentStep = _shouldShowOfferStep ? _offerStep : _reviewStep;
     });
+    _scheduleDraftSave();
   }
 
   Future<void> _fetchOffersForSelectedClass() async {
@@ -464,6 +830,9 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       _isSubmitting = false;
       if (success == true) _currentStep = _successStep;
     });
+    if (success == true) {
+      await _clearDraft();
+    }
   }
 
   Map<String, dynamic> _buildPayload() {
@@ -1128,6 +1497,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       _selectedClass = null;
       _clearSelectedOffer();
     });
+    _scheduleDraftSave();
   }
 
   Future<void> _selectClass(PublicRegistrationClassModel classItem) async {
@@ -1137,6 +1507,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       _selectedClass = classItem;
       _clearSelectedOffer();
     });
+    _scheduleDraftSave();
 
     await _fetchOffersForSelectedClass();
   }
@@ -1153,6 +1524,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         _guardianNameController.text = _fatherNameController.text.trim();
       }
     });
+    _scheduleDraftSave();
   }
 
   void _showMessage(String message) {
@@ -1508,7 +1880,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 label: 'Gênero',
                 value: _studentGender,
                 items: const ['Feminino', 'Masculino', 'Outro'],
-                onChanged: (value) => setState(() => _studentGender = value!),
+                onChanged: (value) =>
+                    _setDraftState(() => _studentGender = value!),
               ),
             ],
           ),
@@ -1615,7 +1988,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         CheckboxListTile(
           value: _fatherNotInformed,
           onChanged: (value) {
-            setState(() {
+            _setDraftState(() {
               _fatherNotInformed = value ?? false;
               if (_fatherNotInformed) {
                 _fatherNameController.clear();
@@ -1930,7 +2303,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     'Outro',
                   ],
                   onChanged: (value) =>
-                      setState(() => _otherRelationship = value!),
+                      _setDraftState(() => _otherRelationship = value!),
                 ),
                 SizedBox(height: 14.h),
                 _buildTextField(
@@ -2214,7 +2587,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     'A criança possui alguma condição de saúde que a escola precisa saber?',
                 value: _hasHealthCondition,
                 onChanged: (value) =>
-                    setState(() => _hasHealthCondition = value),
+                    _setDraftState(() => _hasHealthCondition = value),
               ),
               if (_hasHealthCondition) ...[
                 SizedBox(height: 12.h),
@@ -2236,7 +2609,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 title: 'Usa medicamento de uso contínuo?',
                 value: _usesContinuousMedication,
                 onChanged: (value) =>
-                    setState(() => _usesContinuousMedication = value),
+                    _setDraftState(() => _usesContinuousMedication = value),
               ),
               if (_usesContinuousMedication) ...[
                 SizedBox(height: 12.h),
@@ -2261,7 +2634,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               _buildYesNoQuestion(
                 title: 'Possui alergia?',
                 value: _hasAllergies,
-                onChanged: (value) => setState(() {
+                onChanged: (value) => _setDraftState(() {
                   _hasAllergies = value;
                   if (!value) _selectedAllergies.clear();
                 }),
@@ -2284,7 +2657,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               _buildYesNoQuestion(
                 title: 'Possui deficiência ou necessidade de acessibilidade?',
                 value: _hasDisability,
-                onChanged: (value) => setState(() {
+                onChanged: (value) => _setDraftState(() {
                   _hasDisability = value;
                   if (!value) _selectedDisabilities.clear();
                 }),
@@ -2308,7 +2681,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 title:
                     'Possui diagnóstico ou acompanhamento relacionado ao neurodesenvolvimento?',
                 value: _hasNeurodevelopmentalCondition,
-                onChanged: (value) => setState(() {
+                onChanged: (value) => _setDraftState(() {
                   _hasNeurodevelopmentalCondition = value;
                   if (!value) _selectedNeurodevelopmentalConditions.clear();
                 }),
@@ -2331,7 +2704,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               _buildYesNoQuestion(
                 title: 'Usa óculos ou lente de contato?',
                 value: _wearsGlasses,
-                onChanged: (value) => setState(() {
+                onChanged: (value) => _setDraftState(() {
                   _wearsGlasses = value;
                   if (!value) {
                     _usesGlassesDaily = false;
@@ -2344,7 +2717,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 CheckboxListTile(
                   value: _usesGlassesDaily,
                   onChanged: (value) =>
-                      setState(() => _usesGlassesDaily = value ?? false),
+                      _setDraftState(() => _usesGlassesDaily = value ?? false),
                   contentPadding: EdgeInsets.zero,
                   activeColor: const Color(0xFF00A859),
                   title: Text('Usa diariamente', style: GoogleFonts.inter()),
@@ -2352,7 +2725,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 CheckboxListTile(
                   value: _needsFrontSeat,
                   onChanged: (value) =>
-                      setState(() => _needsFrontSeat = value ?? false),
+                      _setDraftState(() => _needsFrontSeat = value ?? false),
                   contentPadding: EdgeInsets.zero,
                   activeColor: const Color(0xFF00A859),
                   title: Text(
@@ -2365,7 +2738,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               _buildYesNoQuestion(
                 title: 'Possui restrição alimentar?',
                 value: _hasFoodRestriction,
-                onChanged: (value) => setState(() {
+                onChanged: (value) => _setDraftState(() {
                   _hasFoodRestriction = value;
                   if (!value) _selectedFoodRestrictions.clear();
                 }),
@@ -2599,7 +2972,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       feeLabel: fee,
       description:
           'O aluno frequenta a escola no horário regular da turma escolhida.',
-      onTap: () => setState(() => _selectedEnrollmentOffer = null),
+      onTap: () => _setDraftState(() => _selectedEnrollmentOffer = null),
     );
   }
 
@@ -2615,7 +2988,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         schedule: _offerScheduleLabel(offer),
         feeLabel: _offerFeeLabel(offer),
         description: _offerDescription(offer),
-        onTap: () => setState(() => _selectedEnrollmentOffer = offer),
+        onTap: () => _setDraftState(() => _selectedEnrollmentOffer = offer),
       ),
     );
   }
@@ -2987,7 +3360,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       label: Text(label),
       selected: selected,
       onSelected: enabled
-          ? (_) => setState(() => _primaryResponsibleType = value)
+          ? (_) => _setDraftState(() => _primaryResponsibleType = value)
           : null,
       selectedColor: const Color(0xFFE8F8EF),
       disabledColor: const Color(0xFFF1F5F9),
@@ -3140,7 +3513,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           label: Text(option),
           selected: isSelected,
           onSelected: (value) {
-            setState(() {
+            _setDraftState(() {
               if (value) {
                 selected.add(option);
               } else {
@@ -3256,84 +3629,118 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       builder: (context) {
         var query = '';
 
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final filtered = parauapebasNeighborhoods.where((item) {
-              return item.toLowerCase().contains(query.toLowerCase().trim());
-            }).toList();
+        return Theme(
+          data: Theme.of(context).copyWith(
+            brightness: Brightness.light,
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF00A859),
+              surface: Colors.white,
+              onSurface: Color(0xFF0F172A),
+            ),
+            textSelectionTheme: const TextSelectionThemeData(
+              cursorColor: Color(0xFF00A859),
+              selectionColor: Color(0x5534D399),
+              selectionHandleColor: Color(0xFF00A859),
+            ),
+            dividerColor: const Color(0xFFE2E8F0),
+          ),
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              final filtered = parauapebasNeighborhoods.where((item) {
+                return item.toLowerCase().contains(query.toLowerCase().trim());
+              }).toList();
 
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(
-                  20.w,
-                  18.h,
-                  20.w,
-                  MediaQuery.of(context).viewInsets.bottom + 18.h,
-                ),
-                child: SizedBox(
-                  height: MediaQuery.of(context).size.height * 0.72,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Escolha o bairro',
-                        style: GoogleFonts.inter(
-                          fontSize: 20.sp,
-                          fontWeight: FontWeight.w800,
-                          color: const Color(0xFF0F172A),
+              return SafeArea(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    20.w,
+                    18.h,
+                    20.w,
+                    MediaQuery.of(context).viewInsets.bottom + 18.h,
+                  ),
+                  child: SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.72,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Escolha o bairro',
+                          style: GoogleFonts.inter(
+                            fontSize: 20.sp,
+                            fontWeight: FontWeight.w800,
+                            color: const Color(0xFF0F172A),
+                          ),
                         ),
-                      ),
-                      SizedBox(height: 12.h),
-                      TextField(
-                        autofocus: true,
-                        decoration: _inputDecoration(
-                          label: 'Buscar bairro',
-                          icon: Icons.search_rounded,
+                        SizedBox(height: 12.h),
+                        TextField(
+                          autofocus: true,
+                          cursorColor: const Color(0xFF00A859),
+                          style: GoogleFonts.inter(
+                            fontSize: 15.sp,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF0F172A),
+                          ),
+                          decoration: _inputDecoration(
+                            label: 'Buscar bairro',
+                            icon: Icons.search_rounded,
+                          ).copyWith(
+                            hintStyle: GoogleFonts.inter(
+                              color: const Color(0xFF94A3B8),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          onChanged: (value) =>
+                              setModalState(() => query = value),
                         ),
-                        onChanged: (value) =>
-                            setModalState(() => query = value),
-                      ),
-                      SizedBox(height: 12.h),
-                      Expanded(
-                        child: ListView.separated(
-                          itemCount: filtered.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final item = filtered[index];
-                            final isSelected = item == _selectedNeighborhood;
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(
-                                item,
-                                style: GoogleFonts.inter(
-                                  fontWeight: isSelected
-                                      ? FontWeight.w800
-                                      : FontWeight.w600,
+                        SizedBox(height: 12.h),
+                        Expanded(
+                          child: ListView.separated(
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, __) => const Divider(
+                              height: 1,
+                              color: Color(0xFFE2E8F0),
+                            ),
+                            itemBuilder: (context, index) {
+                              final item = filtered[index];
+                              final isSelected = item == _selectedNeighborhood;
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  item,
+                                  style: GoogleFonts.inter(
+                                    fontWeight: isSelected
+                                        ? FontWeight.w800
+                                        : FontWeight.w600,
+                                    color: const Color(0xFF0F172A),
+                                  ),
                                 ),
-                              ),
-                              trailing: isSelected
-                                  ? const Icon(
-                                      Icons.check_circle_rounded,
-                                      color: Color(0xFF00A859),
-                                    )
-                                  : null,
-                              onTap: () => Navigator.of(context).pop(item),
-                            );
-                          },
+                                trailing: isSelected
+                                    ? const Icon(
+                                        Icons.check_circle_rounded,
+                                        color: Color(0xFF00A859),
+                                      )
+                                    : null,
+                                selected: isSelected,
+                                selectedTileColor: const Color(0xFFF0FDF4),
+                                onTap: () => Navigator.of(context).pop(item),
+                              );
+                            },
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       },
     );
 
     if (selected != null) {
       setState(() => _selectedNeighborhood = selected);
+      _scheduleDraftSave();
     }
   }
 
