@@ -25,6 +25,8 @@ import 'package:provider/provider.dart';
 
 import 'embedded_web_camera_stub.dart'
     if (dart.library.html) 'embedded_web_camera_web.dart';
+import 'qr_scanner_web_compat_stub.dart'
+    if (dart.library.html) 'qr_scanner_web_compat_web.dart';
 
 enum ScannerState { scanningQR, takingPhoto, processing }
 
@@ -268,6 +270,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         '[ExamScanner] Iniciando scanner QR. kIsWeb=$kIsWeb',
       );
       await _scannerController.start();
+      if (kIsWeb) {
+        scheduleQrPreviewRepair(reason: 'scanner-started');
+      }
       debugPrint('[ExamScanner] Scanner QR iniciado com sucesso.');
       _qrDetectionEvents = 0;
       _lastDetectedQrCode = null;
@@ -1177,6 +1182,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
           '[ExamScanner] QR preview host size='
           '${constraints.maxWidth}x${constraints.maxHeight} kIsWeb=$kIsWeb',
         );
+        if (kIsWeb && _hasStartedQrScanner) {
+          scheduleQrPreviewRepair(reason: 'qr-layer-build');
+        }
 
         return MobileScanner(
           controller: _scannerController,
