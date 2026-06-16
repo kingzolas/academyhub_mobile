@@ -272,6 +272,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       await _scannerController.start();
       if (kIsWeb) {
         scheduleQrPreviewRepair(reason: 'scanner-started');
+        showQrPreviewOverlay(reason: 'scanner-started');
       }
       debugPrint('[ExamScanner] Scanner QR iniciado com sucesso.');
       _qrDetectionEvents = 0;
@@ -290,6 +291,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       }
     } catch (e) {
       debugPrint("Erro ao iniciar o scanner de QR: $e");
+      if (kIsWeb) {
+        hideQrPreviewOverlay(reason: 'scanner-start-error');
+      }
       if (mounted) {
         setState(() {
           _qrScannerErrorMessage = kIsWeb
@@ -343,6 +347,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     await _cameraController?.dispose();
     _cameraController = null;
     await _webCameraController.stop();
+    if (kIsWeb) {
+      hideQrPreviewOverlay(reason: 'reset-to-qr-mode');
+    }
     _webPickedPreviewBytes = null;
     _isCapturingPhoto = false;
 
@@ -365,6 +372,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
 
   @override
   void dispose() {
+    if (kIsWeb) {
+      hideQrPreviewOverlay(reason: 'dispose');
+    }
     _scannerController.dispose();
     _cameraController?.dispose();
     _diagnosticQrUuidController.dispose();
@@ -575,6 +585,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
       'qrDetectionEvents': _qrDetectionEvents,
     });
     setState(() => _currentState = ScannerState.processing);
+    if (kIsWeb) {
+      hideQrPreviewOverlay(reason: 'qr-detected');
+    }
     await _scannerController.stop();
     debugPrint('[ExamScanner] QR: scanner pausado/parado.');
 
@@ -1184,6 +1197,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         );
         if (kIsWeb && _hasStartedQrScanner) {
           scheduleQrPreviewRepair(reason: 'qr-layer-build');
+          showQrPreviewOverlay(reason: 'qr-layer-build');
         }
 
         return MobileScanner(
@@ -1995,6 +2009,9 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
   }
 
   Future<void> _openManualEntryFlow() async {
+    if (kIsWeb) {
+      hideQrPreviewOverlay(reason: 'manual-entry');
+    }
     await _scannerController.stop();
 
     if (!mounted) return;
