@@ -1357,6 +1357,27 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
         _readNumericValue(aiResult['score']);
   }
 
+  String _formatGradeLimit(double value) {
+    if (value == value.truncateToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+    return value.toStringAsFixed(1);
+  }
+
+  double _extractMaxGrade(
+    Map<String, dynamic> sheetData,
+    Map<String, dynamic>? correctionSummary,
+    Map<String, dynamic>? aiResult,
+  ) {
+    return _readNumericValue(correctionSummary?['maxGrade']) ??
+        _readNumericValue(aiResult?['maxGrade']) ??
+        _readNumericValue(sheetData['maxGrade']) ??
+        _readNumericValue(sheetData['maxScore']) ??
+        _readNumericValue(sheetData['totalValue']) ??
+        _readNumericValue(sheetData['examTotalValue']) ??
+        10.0;
+  }
+
   Map<String, dynamic>? _extractCorrectionSummary(
     Map<String, dynamic> aiResult,
   ) {
@@ -1464,6 +1485,8 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
     final notDetectedCount =
         _readIntValue(correctionSummary?['notDetectedCount']) ??
             _readIntValue(aiResult?['notDetectedCount']);
+    final maxGrade = _extractMaxGrade(sheetData, correctionSummary, aiResult);
+    final maxGradeLabel = _formatGradeLimit(maxGrade);
 
     await showModalBottomSheet(
       context: context,
@@ -1611,6 +1634,21 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                             ),
                           ),
                         ),
+                      Padding(
+                        padding: EdgeInsets.only(bottom: 12.h),
+                        child: Center(
+                          child: Text(
+                            'Valor da prova: $maxGradeLabel pontos',
+                            style: TextStyle(
+                              color: isDark
+                                  ? Colors.grey[300]
+                                  : Colors.grey[700],
+                              fontWeight: FontWeight.w600,
+                              fontSize: 12.sp,
+                            ),
+                          ),
+                        ),
+                      ),
                       TextField(
                         controller: gradeController,
                         keyboardType: const TextInputType.numberWithOptions(
@@ -1824,14 +1862,23 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                       final double? finalGrade =
                                           double.tryParse(input);
 
-                                      if (finalGrade == null ||
-                                          finalGrade < 0 ||
-                                          finalGrade > 10) {
+                                      final isValidGrade =
+                                          finalGrade != null &&
+                                              finalGrade >= 0 &&
+                                              finalGrade <= maxGrade;
+                                      debugPrint(
+                                        '[OMR GRADE VALIDATION] '
+                                        'grade=$finalGrade '
+                                        'maxGrade=$maxGrade '
+                                        'valid=$isValidGrade',
+                                      );
+
+                                      if (!isValidGrade) {
                                         ScaffoldMessenger.of(context)
                                             .showSnackBar(
-                                          const SnackBar(
+                                          SnackBar(
                                             content: Text(
-                                              'Digite uma nota válida entre 0 e 10.',
+                                              'Digite uma nota válida entre 0 e $maxGradeLabel.',
                                             ),
                                             backgroundColor: Colors.orange,
                                           ),
@@ -1864,6 +1911,7 @@ class _ExamScannerScreenState extends State<ExamScannerScreen> {
                                           objectiveGrade: objectiveGrade,
                                           answers: answers,
                                           correctionDetails: correctionSummary,
+                                          maxGrade: maxGrade,
                                           totalQuestions: totalQuestions,
                                           correctCount: correctCount,
                                           wrongCount: wrongCount,
