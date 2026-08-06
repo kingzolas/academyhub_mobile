@@ -43,6 +43,10 @@ require_command() {
   fi
 }
 
+FLUTTER_ROOT=''
+FLUTTER_BIN=''
+DART_BIN=''
+
 flutter_version_is_expected() {
   local version_output escaped_version
   escaped_version="${FLUTTER_VERSION//./\\.}"
@@ -50,26 +54,97 @@ flutter_version_is_expected() {
   printf '%s\n' "$version_output" | grep -Eq "Flutter ${escaped_version}([^0-9.]|$)"
 }
 
-validate_flutter_version() {
-  local version_output escaped_version
-  escaped_version="${FLUTTER_VERSION//./\\.}"
-  version_output="$(flutter --version 2>&1)" || {
-    echo '[BuildWeb] unable to execute flutter --version' >&2
-    exit 1
-  }
-  if ! printf '%s\n' "$version_output" | grep -Eq "Flutter ${escaped_version}([^0-9.]|$)"; then
-    echo "[BuildWeb] Flutter ${FLUTTER_VERSION} is required, but a different version was found:" >&2
-    printf '%s\n' "$version_output" >&2
-    exit 1
+log_sdk_diagnostics() {
+  echo '[BuildWeb] SDK diagnostics:'
+  uname -a || true
+  uname -m || true
+  command -v git || true
+  command -v tar || true
+  command -v xz || true
+  command -v curl || true
+  echo "[BuildWeb] Flutter root: $FLUTTER_ROOT"
+  echo "[BuildWeb] Flutter executable: $FLUTTER_BIN"
+  ls -ld "$FLUTTER_ROOT" || true
+  ls -la "$FLUTTER_ROOT/bin" || true
+  ls -la "$FLUTTER_BIN" || true
+  file "$FLUTTER_BIN" || true
+  test -f "$FLUTTER_BIN" && echo '[BuildWeb] flutter executable exists' || echo '[BuildWeb] flutter executable is missing'
+  test -x "$FLUTTER_BIN" && echo '[BuildWeb] flutter executable is executable' || echo '[BuildWeb] flutter executable is not executable'
+  ls -la "$DART_BIN" || true
+  file "$DART_BIN" || true
+}
+
+run_flutter_version() {
+  local flutter_exit
+  set +e
+  "$FLUTTER_BIN" --version
+  flutter_exit=$?
+  set -e
+  echo "[BuildWeb] flutter --version exit code: $flutter_exit"
+  return "$flutter_exit"
+}
+
+run_dart_version() {
+  local dart_exit
+  set +e
+  "$DART_BIN" --version
+  dart_exit=$?
+  set -e
+  echo "[BuildWeb] dart --version exit code: $dart_exit"
+  if [[ "$dart_exit" -ne 0 ]] && command -v ldd >/dev/null 2>&1; then
+    echo '[BuildWeb] ldd diagnostics for bundled Dart:'
+    ldd "$DART_BIN" || true
+  fi
+  return "$dart_exit"
+}
+
+validate_flutter_sdk() {
+  local candidate_root flutter_exit
+  candidate_root="$1"
+  FLUTTER_ROOT="$(readlink -f "$candidate_root")"
+  FLUTTER_BIN="$FLUTTER_ROOT/bin/flutter"
+  DART_BIN="$FLUTTER_ROOT/bin/cache/dart-sdk/bin/dart"
+
+  chmod +x "$FLUTTER_BIN" 2>/dev/null || true
+  chmod +x "$FLUTTER_ROOT/bin/dart" 2>/dev/null || true
+  chmod +x "$DART_BIN" 2>/dev/null || true
+  log_sdk_diagnostics
+
+  if [[ ! -f "$FLUTTER_BIN" || ! -x "$FLUTTER_BIN" || ! -f "$DART_BIN" || ! -x "$DART_BIN" ]]; then
+    echo '[BuildWeb] Flutter SDK layout or executable permissions are invalid' >&2
+    return 1
+  fi
+
+  git config --global --add safe.directory "$FLUTTER_ROOT"
+  echo '[BuildWeb] Flutter SDK Git validation:'
+  git -C "$FLUTTER_ROOT" rev-parse --is-inside-work-tree
+  git -C "$FLUTTER_ROOT" status --short
+
+  if ! run_dart_version; then
+    echo '[BuildWeb] Bundled Dart could not execute; see diagnostics above.' >&2
+    return 1
+  fi
+  if run_flutter_version; then
+    :
+  else
+    flutter_exit=$?
+    echo "[BuildWeb] Flutter executable failed with exit code $flutter_exit; see original output above." >&2
+    return "$flutter_exit"
+  fi
+  local reported_version
+  reported_version="$("$FLUTTER_BIN" --version 2>&1)"
+  if ! printf '%s\n' "$reported_version" | grep -Eq "Flutter ${FLUTTER_VERSION//./\\.}([^0-9.]|$)"; then
+    echo "[BuildWeb] Flutter ${FLUTTER_VERSION} is required, but the installed SDK reported another version." >&2
+    printf '%s\n' "$reported_version" >&2
+    return 1
   fi
   echo '[BuildWeb] Flutter SDK validado'
-  printf '[BuildWeb] %s\n' "$(printf '%s\n' "$version_output" | head -n 1)"
 }
 
 install_flutter_for_netlify() {
-  local cache_root sdk_dir archive_file temporary_dir sdk_parent
+  local cache_root sdk_dir marker_file archive_file temporary_dir sdk_parent
 
-  for command_name in curl tar xz git sha256sum mktemp; do
+  for command_name in curl tar xz git sha256sum mktemp readlink file; do
     require_command "$command_name"
   done
   if [[ -z "$FLUTTER_SDK_URL" || -z "$FLUTTER_SDK_SHA256" ]]; then
@@ -81,13 +156,13 @@ install_flutter_for_netlify() {
   # exposed. A normal XDG/HOME cache remains a safe, self-contained fallback.
   cache_root="${NETLIFY_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME}/.cache}}/academyhub-mobile/flutter"
   sdk_dir="${cache_root}/${FLUTTER_VERSION}"
+  marker_file="${sdk_dir}/.academyhub-flutter-sdk-complete"
   sdk_parent="$(dirname "$sdk_dir")"
   mkdir -p "$sdk_parent"
 
-  if [[ -x "$sdk_dir/flutter/bin/flutter" ]]; then
-    git config --global --add safe.directory "$sdk_dir/flutter" || true
-    export PATH="$sdk_dir/flutter/bin:$PATH"
-    if flutter_version_is_expected; then
+  if [[ -d "$sdk_dir" ]]; then
+    if [[ -f "$marker_file" ]] && validate_flutter_sdk "$sdk_dir"; then
+      export PATH="$FLUTTER_ROOT/bin:$PATH"
       echo "[BuildWeb] Flutter ${FLUTTER_VERSION} found in cache"
       return
     fi
@@ -108,31 +183,39 @@ install_flutter_for_netlify() {
     echo '[BuildWeb] Flutter SDK checksum validation failed' >&2
     exit 1
   }
-  tar -xJf "$archive_file" -C "$temporary_dir"
-  if [[ ! -x "$temporary_dir/flutter/bin/flutter" ]]; then
+  tar --no-same-owner -xJf "$archive_file" -C "$temporary_dir"
+  if [[ ! -d "$temporary_dir/flutter" ]]; then
     echo '[BuildWeb] Flutter SDK archive is incomplete: flutter/bin/flutter is missing' >&2
+    exit 1
+  fi
+
+  if ! validate_flutter_sdk "$temporary_dir/flutter"; then
+    echo '[BuildWeb] Fresh Flutter SDK validation failed; preserving the original diagnostics above.' >&2
     exit 1
   fi
 
   rm -rf -- "$sdk_dir"
   mv "$temporary_dir/flutter" "$sdk_dir"
   rm -rf -- "$temporary_dir"
-  git config --global --add safe.directory "$sdk_dir/flutter" || true
-  export PATH="$sdk_dir/flutter/bin:$PATH"
-  validate_flutter_version
+  if ! validate_flutter_sdk "$sdk_dir"; then
+    echo '[BuildWeb] Installed Flutter SDK is invalid at its final cache location.' >&2
+    exit 1
+  fi
+  touch "$marker_file"
+  export PATH="$FLUTTER_ROOT/bin:$PATH"
 }
 
 ensure_flutter() {
   local host_os
   host_os="$(uname -s)"
   if command -v flutter >/dev/null 2>&1 && flutter_version_is_expected; then
-    validate_flutter_version
+    validate_flutter_sdk "$(dirname "$(command -v flutter)")/.."
+    export PATH="$FLUTTER_ROOT/bin:$PATH"
     return
   fi
 
   if [[ "${NETLIFY:-false}" == 'true' && "$host_os" == 'Linux' ]]; then
     install_flutter_for_netlify
-    validate_flutter_version
     return
   fi
 
@@ -185,6 +268,12 @@ echo "[BuildWeb] deployedAt=${DEPLOYED_AT} context=${BUILD_CONTEXT}"
 
 require_command git
 ensure_flutter
+export CI=true
+export FLUTTER_SUPPRESS_ANALYTICS=true
+export PATH="$FLUTTER_ROOT/bin:$PATH"
+echo "[BuildWeb] flutter command: $(command -v flutter)"
+flutter --version
+dart --version
 if [[ "${NETLIFY:-false}" == 'true' ]]; then
   flutter config --no-analytics
 fi
