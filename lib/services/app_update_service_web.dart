@@ -145,22 +145,24 @@ class AppUpdateService extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>> _fetchVersion(Uri uri) async {
-    final dynamic response = await html.window.fetch(
+    // universal_html's fetch bridge can return a minified interop object in a
+    // production Flutter bundle. HttpRequest exposes typed status and body
+    // accessors reliably on Safari-installed PWAs as well as Chrome.
+    final response = await html.HttpRequest.request(
       uri.toString(),
-      <String, dynamic>{
-        'cache': 'no-store',
-        'credentials': 'same-origin',
-        'headers': <String, String>{
-          'Cache-Control': 'no-store, no-cache, must-revalidate',
-          'Pragma': 'no-cache',
-        },
+      method: 'GET',
+      withCredentials: true,
+      responseType: 'text',
+      requestHeaders: const <String, String>{
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
       },
     ).timeout(_requestTimeout);
-    final status = response.status as int? ?? 0;
+    final status = response.status ?? 0;
     if (status < 200 || status >= 300) {
       throw StateError('version.json HTTP $status');
     }
-    final body = await response.text() as String;
+    final body = response.responseText ?? '';
     final decoded = jsonDecode(body);
     if (decoded is! Map<String, dynamic>) {
       throw const FormatException('version.json deve conter um objeto JSON.');
