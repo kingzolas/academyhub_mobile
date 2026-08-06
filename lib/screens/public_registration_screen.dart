@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:academyhub_mobile/model/public_enrollment_offer_model.dart';
 import 'package:academyhub_mobile/model/public_registration_class_model.dart';
-import 'package:academyhub_mobile/providers/theme_provider.dart';
 import 'package:academyhub_mobile/services/public_registration_service.dart';
 import 'package:academyhub_mobile/util/parauapebas_neighborhoods.dart';
 import 'package:academyhub_mobile/widgets/report_card_operation_dialog.dart';
@@ -15,8 +14,117 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+const bool _registrationVisualMockEnabled =
+    bool.fromEnvironment('PUBLIC_REGISTRATION_VISUAL_MOCK');
+
+class _RegistrationFlowColors {
+  final bool isDark;
+
+  const _RegistrationFlowColors({required this.isDark});
+
+  static _RegistrationFlowColors of(BuildContext context) {
+    return _RegistrationFlowColors(
+      isDark: Theme.of(context).brightness == Brightness.dark,
+    );
+  }
+
+  Color get brand => const Color(0xFF00A859);
+  Color get brandStrong => const Color(0xFF047857);
+  Color get background =>
+      isDark ? const Color(0xFF0B1220) : const Color(0xFFF6F8FA);
+  Color get surface => isDark ? const Color(0xFF111827) : Colors.white;
+  Color get surfaceAlt =>
+      isDark ? const Color(0xFF172033) : const Color(0xFFF8FAFC);
+  Color get elevated => isDark ? const Color(0xFF182235) : Colors.white;
+  Color get selectedSurface =>
+      isDark ? const Color(0xFF0E2A23) : const Color(0xFFE8F8EF);
+  Color get disabledSurface =>
+      isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9);
+  Color get border =>
+      isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+  Color get borderStrong =>
+      isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1);
+  Color get textPrimary =>
+      isDark ? const Color(0xFFF8FAFC) : const Color(0xFF0F172A);
+  Color get textSecondary =>
+      isDark ? const Color(0xFFCBD5E1) : const Color(0xFF475569);
+  Color get textMuted =>
+      isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+  Color get iconSurface =>
+      isDark ? const Color(0xFF0F2D24) : const Color(0xFFE8F8EF);
+  Color get infoSurface =>
+      isDark ? const Color(0xFF13213A) : const Color(0xFFEFF6FF);
+  Color get infoText =>
+      isDark ? const Color(0xFFBFDBFE) : const Color(0xFF1E40AF);
+  Color get dangerSurface =>
+      isDark ? const Color(0xFF3A1518) : const Color(0xFFFEE2E2);
+  Color get dangerText =>
+      isDark ? const Color(0xFFFCA5A5) : const Color(0xFFB91C1C);
+  Color get footer => isDark ? const Color(0xFF0F172A) : Colors.white;
+  Color get progressTrack =>
+      isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+  Color get disabledButton =>
+      isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1);
+  Color get disabledButtonText =>
+      isDark ? const Color(0xFFCBD5E1) : Colors.white;
+}
+
+ThemeData _registrationFlowTheme(_RegistrationFlowColors colors) {
+  final brightness = colors.isDark ? Brightness.dark : Brightness.light;
+  final base = ThemeData(
+    useMaterial3: true,
+    brightness: brightness,
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: colors.brand,
+      brightness: brightness,
+    ).copyWith(
+      primary: colors.brand,
+      surface: colors.surface,
+      onSurface: colors.textPrimary,
+      outline: colors.border,
+    ),
+    scaffoldBackgroundColor: colors.background,
+  );
+
+  return base.copyWith(
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(
+        foregroundColor: colors.textPrimary,
+        disabledForegroundColor: colors.textMuted,
+      ),
+    ),
+    checkboxTheme: CheckboxThemeData(
+      fillColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected)
+            ? colors.brand
+            : colors.surface,
+      ),
+      checkColor: WidgetStateProperty.all(Colors.white),
+      side: BorderSide(color: colors.borderStrong),
+    ),
+    chipTheme: base.chipTheme.copyWith(
+      backgroundColor: colors.surface,
+      selectedColor: colors.selectedSurface,
+      disabledColor: colors.disabledSurface,
+      side: BorderSide(color: colors.border),
+      labelStyle: GoogleFonts.inter(
+        fontWeight: FontWeight.w700,
+        color: colors.textPrimary,
+      ),
+    ),
+    snackBarTheme: SnackBarThemeData(
+      backgroundColor:
+          colors.isDark ? const Color(0xFFE2E8F0) : const Color(0xFF0F172A),
+      contentTextStyle: GoogleFonts.inter(
+        color: colors.isDark ? const Color(0xFF0F172A) : Colors.white,
+        fontWeight: FontWeight.w600,
+      ),
+      behavior: SnackBarBehavior.floating,
+    ),
+  );
+}
 
 class PublicRegistrationScreen extends StatefulWidget {
   final String schoolId;
@@ -34,9 +142,16 @@ class PublicRegistrationScreen extends StatefulWidget {
 }
 
 class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
-  static const int _draftVersion = 1;
-  static const int _classStep = 7;
-  static const int _offerStep = 8;
+  static const int _draftVersion = 2;
+  static const int _welcomeStep = 0;
+  static const int _classStep = 1;
+  static const int _offerStep = 2;
+  static const int _studentStep = 3;
+  static const int _motherStep = 4;
+  static const int _fatherStep = 5;
+  static const int _responsibleStep = 6;
+  static const int _addressStep = 7;
+  static const int _healthStep = 8;
   static const int _reviewStep = 9;
   static const int _successStep = 10;
   static const Duration _draftTtl = Duration(days: 7);
@@ -167,7 +282,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     filter: {'#': RegExp(r'[0-9]')},
   );
 
-  int _currentStep = 0;
+  int _currentStep = _welcomeStep;
+  bool _isDarkMode = false;
   bool _showInitialSplash = true;
   bool _isLoadingClasses = true;
   bool _isLoadingOffers = false;
@@ -209,6 +325,9 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   void initState() {
     super.initState();
     _addDraftListeners();
+    if (_registrationVisualMockEnabled) {
+      _seedVisualMockFormData();
+    }
     _loadInitialData();
   }
 
@@ -319,6 +438,26 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     }
   }
 
+  void _seedVisualMockFormData() {
+    _studentNameController.text = 'Ana Clara Silva';
+    _studentBirthController.text = '01/01/2018';
+    _studentCpfController.text = '529.982.247-25';
+    _motherNameController.text = 'Mariana Souza Silva';
+    _motherBirthController.text = '10/03/1990';
+    _motherCpfController.text = '529.982.247-25';
+    _motherRgController.text = '1234567';
+    _motherPhoneController.text = '(94) 99999-9999';
+    _motherEmailController.text = 'mariana@example.com';
+    _motherProfessionController.text = 'Analista';
+    _cepController.text = '68515-000';
+    _streetController.text = 'Rua das Acacias';
+    _numberController.text = '123';
+    _selectedNeighborhood = 'Cidade Nova';
+    _emergencyNameController.text = 'Mariana Souza Silva';
+    _emergencyPhoneController.text = '(94) 99999-9999';
+    _emergencyRelationshipController.text = 'Mae';
+  }
+
   void _scheduleDraftSave() {
     if (!_draftReady || _isRestoringDraft || !mounted) return;
     _draftSaveTimer?.cancel();
@@ -392,6 +531,11 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Future<void> _restoreDraftIfNeeded() async {
+    if (_registrationVisualMockEnabled) {
+      _draftReady = true;
+      return;
+    }
+
     if (_draftRestoreAttempted) return;
     _draftRestoreAttempted = true;
 
@@ -546,6 +690,19 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     var step = value ?? 0;
     if (step < 0) step = 0;
     if (step >= _successStep) step = _reviewStep;
+    const validSteps = {
+      _welcomeStep,
+      _classStep,
+      _offerStep,
+      _studentStep,
+      _motherStep,
+      _fatherStep,
+      _responsibleStep,
+      _addressStep,
+      _healthStep,
+      _reviewStep,
+    };
+    if (!validSteps.contains(step)) return _classStep;
     if (selectedEducationLevel == null && step > _classStep) {
       return _classStep;
     }
@@ -677,14 +834,35 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
 
   void _goBack() {
     if (_isSubmitting) return;
-    if (_currentStep == _reviewStep && !_shouldShowOfferStep) {
-      setState(() => _currentStep = _classStep);
+    final previousStep = _previousStepFor(_currentStep);
+    if (previousStep != null) {
+      setState(() => _currentStep = previousStep);
       _scheduleDraftSave();
-      return;
     }
-    if (_currentStep > 0) {
-      setState(() => _currentStep--);
-      _scheduleDraftSave();
+  }
+
+  int? _previousStepFor(int step) {
+    switch (step) {
+      case _classStep:
+        return _welcomeStep;
+      case _offerStep:
+        return _classStep;
+      case _studentStep:
+        return _shouldShowOfferStep ? _offerStep : _classStep;
+      case _motherStep:
+        return _studentStep;
+      case _fatherStep:
+        return _motherStep;
+      case _responsibleStep:
+        return _fatherStep;
+      case _addressStep:
+        return _responsibleStep;
+      case _healthStep:
+        return _addressStep;
+      case _reviewStep:
+        return _healthStep;
+      default:
+        return null;
     }
   }
 
@@ -692,33 +870,33 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     FocusScope.of(context).unfocus();
 
     switch (_currentStep) {
-      case 0:
+      case _welcomeStep:
         if (_isLoadingClasses || _classesError != null) return;
-        setState(() => _currentStep = 1);
+        setState(() => _currentStep = _classStep);
         _scheduleDraftSave();
         return;
-      case 1:
+      case _studentStep:
         if (_studentFormKey.currentState?.validate() != true) return;
-        setState(() => _currentStep = 2);
+        setState(() => _currentStep = _motherStep);
         _scheduleDraftSave();
         return;
-      case 2:
+      case _motherStep:
         if (_motherFormKey.currentState?.validate() != true) return;
-        setState(() => _currentStep = 3);
+        setState(() => _currentStep = _fatherStep);
         _scheduleDraftSave();
         return;
-      case 3:
+      case _fatherStep:
         if (_fatherFormKey.currentState?.validate() != true) return;
-        setState(() => _currentStep = 4);
+        setState(() => _currentStep = _responsibleStep);
         _scheduleDraftSave();
         return;
-      case 4:
+      case _responsibleStep:
         if (_responsibleFormKey.currentState?.validate() != true) return;
         if (!_validatePrimaryResponsible()) return;
-        setState(() => _currentStep = 5);
+        setState(() => _currentStep = _addressStep);
         _scheduleDraftSave();
         return;
-      case 5:
+      case _addressStep:
         if (_addressFormKey.currentState?.validate() != true) return;
         if (_selectedNeighborhood == null) {
           _showMessage('Escolha o bairro do aluno para continuar.');
@@ -728,13 +906,13 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           _showMessage('Informe o número ou preencha quadra e lote.');
           return;
         }
-        setState(() => _currentStep = 6);
+        setState(() => _currentStep = _healthStep);
         _scheduleDraftSave();
         return;
-      case 6:
+      case _healthStep:
         if (_healthFormKey.currentState?.validate() != true) return;
         if (!_validateHealthStep()) return;
-        setState(() => _currentStep = 7);
+        setState(() => _currentStep = _reviewStep);
         _scheduleDraftSave();
         return;
       case _classStep:
@@ -746,7 +924,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         return;
       case _offerStep:
         if (_isLoadingOffers) return;
-        setState(() => _currentStep = _reviewStep);
+        setState(() => _currentStep = _studentStep);
         _scheduleDraftSave();
         return;
       case _reviewStep:
@@ -765,7 +943,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     if (!mounted) return;
 
     setState(() {
-      _currentStep = _shouldShowOfferStep ? _offerStep : _reviewStep;
+      _currentStep = _shouldShowOfferStep ? _offerStep : _studentStep;
     });
     _scheduleDraftSave();
   }
@@ -792,7 +970,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         _availableOffers = offers;
         _offersLoadedForClassId = selectedClass.id;
         if (_currentStep == _offerStep && offers.isEmpty) {
-          _currentStep = _reviewStep;
+          _currentStep = _studentStep;
         }
       });
     } catch (error) {
@@ -1417,7 +1595,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     final levels = <String>{};
     for (final item in classes) {
       final level = (item.educationLevel ?? '').trim();
-      if (level.isNotEmpty && item.isAvailable) levels.add(level);
+      if (level.isNotEmpty) levels.add(level);
     }
     const preferredOrder = [
       'Educação Infantil',
@@ -1440,6 +1618,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     if (_selectedEducationLevel == null) return const [];
     return (_classes
         .where((item) => item.educationLevel == _selectedEducationLevel)
+        .where((item) => item.id.trim().isNotEmpty)
         .toList()
       ..sort((a, b) {
         final gradeCompare = (a.grade ?? '').compareTo(b.grade ?? '');
@@ -1453,13 +1632,23 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   bool get _shouldShowOfferStep =>
       _availableOffers.isNotEmpty || _offersError != null;
 
-  int get _visibleStepCount => _shouldShowOfferStep ? 10 : 9;
+  List<int> get _orderedDataSteps => [
+        _classStep,
+        if (_shouldShowOfferStep) _offerStep,
+        _studentStep,
+        _motherStep,
+        _fatherStep,
+        _responsibleStep,
+        _addressStep,
+        _healthStep,
+        _reviewStep,
+      ];
+
+  int get _visibleStepCount => _orderedDataSteps.length;
 
   int get _visibleStepNumber {
-    if (!_shouldShowOfferStep && _currentStep >= _reviewStep) {
-      return _visibleStepCount;
-    }
-    return _currentStep + 1;
+    final index = _orderedDataSteps.indexOf(_currentStep);
+    return index == -1 ? 0 : index + 1;
   }
 
   Map<String, String> get _regimeReviewItems {
@@ -1540,7 +1729,9 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
 
   bool get _canUsePrimaryButton {
     if (_isSubmitting) return false;
-    if (_currentStep == 0) return !_isLoadingClasses && _classesError == null;
+    if (_currentStep == _welcomeStep) {
+      return !_isLoadingClasses && _classesError == null;
+    }
     if (_currentStep == _classStep) {
       return _selectedClass?.isAvailable == true && !_isLoadingOffers;
     }
@@ -1549,7 +1740,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   String get _primaryButtonLabel {
-    if (_currentStep == 0) return 'Começar';
+    if (_currentStep == _welcomeStep) return 'Começar';
     if (_currentStep == _reviewStep) return 'Enviar solicitação';
     return 'Continuar';
   }
@@ -1560,36 +1751,41 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     return _validateEmail(text) != null;
   }
 
+  _RegistrationFlowColors get _flowColors =>
+      _RegistrationFlowColors(isDark: _isDarkMode);
+
   @override
   Widget build(BuildContext context) {
     final isSuccess = _currentStep == _successStep;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final flowColors = _RegistrationFlowColors(isDark: _isDarkMode);
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 320),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeOutCubic,
-      child: _showInitialSplash
-          ? _buildInitialSplash()
-          : Scaffold(
-              key: const ValueKey('registration-form'),
-              backgroundColor:
-                  isDark ? const Color(0xFF0F172A) : const Color(0xFFF6F8FA),
-              body: SafeArea(
-                child: Column(
-                  children: [
-                    if (!isSuccess) _buildHeader(),
-                    Expanded(
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        child: _buildStepContent(),
+    return Theme(
+      data: _registrationFlowTheme(flowColors),
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 320),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeOutCubic,
+        child: _showInitialSplash
+            ? _buildInitialSplash()
+            : Scaffold(
+                key: const ValueKey('registration-form'),
+                backgroundColor: flowColors.background,
+                body: SafeArea(
+                  child: Column(
+                    children: [
+                      if (!isSuccess) _buildHeader(),
+                      Expanded(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 220),
+                          child: _buildStepContent(),
+                        ),
                       ),
-                    ),
-                    if (!isSuccess) _buildBottomBar(),
-                  ],
+                      if (!isSuccess) _buildBottomBar(),
+                    ],
+                  ),
                 ),
               ),
-            ),
+      ),
     );
   }
 
@@ -1643,9 +1839,9 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildHeader() {
-    final progress = _visibleStepNumber / _visibleStepCount;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final themeProvider = context.read<ThemeProvider>();
+    final colors = _flowColors;
+    final hasProgress = _currentStep != _welcomeStep;
+    final progress = hasProgress ? _visibleStepNumber / _visibleStepCount : 0.0;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(16.w, 8.h, 16.w, 8.h),
@@ -1658,7 +1854,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 height: 48.w,
                 child: IconButton(
                   tooltip: 'Voltar',
-                  onPressed: _currentStep == 0 ? null : _goBack,
+                  onPressed: _currentStep == _welcomeStep ? null : _goBack,
                   icon: const Icon(Icons.arrow_back_rounded),
                 ),
               ),
@@ -1669,7 +1865,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                   style: GoogleFonts.inter(
                     fontSize: 15.sp,
                     fontWeight: FontWeight.w700,
-                    color: isDark ? Colors.white : const Color(0xFF1E293B),
+                    color: colors.textPrimary,
                   ),
                 ),
               ),
@@ -1678,31 +1874,24 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 height: 48.w,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color: isDark
-                        ? const Color(0xFF1E293B)
-                        : const Color(0xFFE8F8EF),
+                    color: colors.selectedSurface,
                     borderRadius: BorderRadius.circular(16.r),
-                    border: Border.all(
-                      color: isDark
-                          ? const Color(0xFF334155)
-                          : const Color(0xFFCFF4DD),
-                    ),
+                    border: Border.all(color: colors.border),
                   ),
                   child: IconButton(
-                    tooltip:
-                        isDark ? 'Ativar modo claro' : 'Ativar modo escuro',
+                    tooltip: colors.isDark
+                        ? 'Ativar modo claro'
+                        : 'Ativar modo escuro',
                     onPressed: () {
-                      themeProvider.setThemeMode(
-                        isDark ? ThemeMode.light : ThemeMode.dark,
-                      );
+                      setState(() => _isDarkMode = !_isDarkMode);
                     },
                     icon: Icon(
-                      isDark
+                      colors.isDark
                           ? Icons.light_mode_rounded
                           : Icons.dark_mode_rounded,
-                      color: isDark
+                      color: colors.isDark
                           ? const Color(0xFFFDE68A)
-                          : const Color(0xFF047857),
+                          : colors.brandStrong,
                       size: 22.sp,
                     ),
                   ),
@@ -1711,29 +1900,29 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
             ],
           ),
           SizedBox(height: 6.h),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              minHeight: 6.h,
-              value: progress,
-              backgroundColor:
-                  isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
-              valueColor: const AlwaysStoppedAnimation(Color(0xFF00A859)),
-            ),
-          ),
-          SizedBox(height: 8.h),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              'Etapa $_visibleStepNumber de $_visibleStepCount',
-              style: GoogleFonts.inter(
-                fontSize: 12.sp,
-                fontWeight: FontWeight.w600,
-                color:
-                    isDark ? const Color(0xFFCBD5E1) : const Color(0xFF64748B),
+          if (hasProgress) ...[
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 6.h,
+                value: progress,
+                backgroundColor: colors.progressTrack,
+                valueColor: AlwaysStoppedAnimation(colors.brand),
               ),
             ),
-          ),
+            SizedBox(height: 8.h),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Etapa $_visibleStepNumber de $_visibleStepCount',
+                style: GoogleFonts.inter(
+                  fontSize: 12.sp,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textMuted,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1741,24 +1930,24 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
 
   Widget _buildStepContent() {
     switch (_currentStep) {
-      case 0:
+      case _welcomeStep:
         return _buildWelcomeStep();
-      case 1:
-        return _buildStudentStep();
-      case 2:
-        return _buildMotherStep();
-      case 3:
-        return _buildFatherStep();
-      case 4:
-        return _buildResponsibleStep();
-      case 5:
-        return _buildAddressStep();
-      case 6:
-        return _buildHealthStep();
       case _classStep:
         return _buildClassStep();
       case _offerStep:
-        return _shouldShowOfferStep ? _buildOfferStep() : _buildReviewStep();
+        return _shouldShowOfferStep ? _buildOfferStep() : _buildStudentStep();
+      case _studentStep:
+        return _buildStudentStep();
+      case _motherStep:
+        return _buildMotherStep();
+      case _fatherStep:
+        return _buildFatherStep();
+      case _responsibleStep:
+        return _buildResponsibleStep();
+      case _addressStep:
+        return _buildAddressStep();
+      case _healthStep:
+        return _buildHealthStep();
       case _reviewStep:
         return _buildReviewStep();
       case _successStep:
@@ -1812,13 +2001,15 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildSchoolBrandCard(PublicRegistrationSchoolContext school) {
+    final colors = _flowColors;
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(14.w),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colors.surface,
         borderRadius: BorderRadius.circular(18.r),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: colors.border),
       ),
       child: Row(
         children: [
@@ -1827,7 +2018,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
             child: Container(
               width: 54.w,
               height: 54.w,
-              color: const Color(0xFFE8F8EF),
+              color: colors.iconSurface,
               child: school.logoUrl == null
                   ? _SchoolLogoPlaceholder(initials: school.initials)
                   : Image.network(
@@ -1854,7 +2045,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                   style: GoogleFonts.inter(
                     fontSize: 12.sp,
                     fontWeight: FontWeight.w700,
-                    color: const Color(0xFF64748B),
+                    color: colors.textMuted,
                   ),
                 ),
                 SizedBox(height: 4.h),
@@ -1864,7 +2055,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     fontSize: 16.sp,
                     height: 1.2,
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFF0F172A),
+                    color: colors.textPrimary,
                   ),
                 ),
               ],
@@ -2017,6 +2208,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildFatherStep() {
+    final colors = _flowColors;
+
     return _StepContainer(
       key: const ValueKey('father'),
       children: [
@@ -2048,13 +2241,13 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           },
           contentPadding: EdgeInsets.zero,
           controlAffinity: ListTileControlAffinity.leading,
-          activeColor: const Color(0xFF00A859),
+          activeColor: colors.brand,
           title: Text(
             'Não consta no registro',
             style: GoogleFonts.inter(
               fontSize: 14.sp,
               fontWeight: FontWeight.w700,
-              color: const Color(0xFF334155),
+              color: colors.textSecondary,
             ),
           ),
         ),
@@ -2145,6 +2338,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
 
   // ignore: unused_element
   Widget _buildFiliationStep() {
+    final colors = _flowColors;
+
     return _StepContainer(
       key: const ValueKey('filiation'),
       children: [
@@ -2189,13 +2384,13 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 },
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
-                activeColor: const Color(0xFF00A859),
+                activeColor: colors.brand,
                 title: Text(
                   'Não consta no registro',
                   style: GoogleFonts.inter(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.w700,
-                    color: const Color(0xFF334155),
+                    color: colors.textSecondary,
                   ),
                 ),
               ),
@@ -2458,6 +2653,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
 
   // ignore: unused_element
   Widget _buildEmailStep() {
+    final colors = _flowColors;
+
     return _StepContainer(
       key: const ValueKey('email'),
       children: [
@@ -2488,7 +2685,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               style: GoogleFonts.inter(
                 fontSize: 13.sp,
                 fontWeight: FontWeight.w700,
-                color: const Color(0xFF475569),
+                color: colors.textSecondary,
               ),
             ),
           ),
@@ -2506,10 +2703,10 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               return ActionChip(
                 label: Text(chip.domain),
                 onPressed: () => _applyEmailDomain(chip.domain),
-                backgroundColor: Colors.white,
-                side: const BorderSide(color: Color(0xFFE2E8F0)),
+                backgroundColor: colors.surface,
+                side: BorderSide(color: colors.border),
                 labelStyle: GoogleFonts.inter(
-                  color: const Color(0xFF1E293B),
+                  color: colors.textSecondary,
                   fontWeight: FontWeight.w600,
                 ),
               );
@@ -2609,6 +2806,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildHealthStep() {
+    final colors = _flowColors;
+
     return _StepContainer(
       key: const ValueKey('health'),
       children: [
@@ -2761,18 +2960,21 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                   onChanged: (value) =>
                       _setDraftState(() => _usesGlassesDaily = value ?? false),
                   contentPadding: EdgeInsets.zero,
-                  activeColor: const Color(0xFF00A859),
-                  title: Text('Usa diariamente', style: GoogleFonts.inter()),
+                  activeColor: colors.brand,
+                  title: Text(
+                    'Usa diariamente',
+                    style: GoogleFonts.inter(color: colors.textSecondary),
+                  ),
                 ),
                 CheckboxListTile(
                   value: _needsFrontSeat,
                   onChanged: (value) =>
                       _setDraftState(() => _needsFrontSeat = value ?? false),
                   contentPadding: EdgeInsets.zero,
-                  activeColor: const Color(0xFF00A859),
+                  activeColor: colors.brand,
                   title: Text(
                     'Precisa sentar mais perto do quadro',
-                    style: GoogleFonts.inter(),
+                    style: GoogleFonts.inter(color: colors.textSecondary),
                   ),
                 ),
               ],
@@ -2844,6 +3046,9 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildClassStep() {
+    final colors = _flowColors;
+    final visibleClasses = _visibleClasses;
+
     return _StepContainer(
       key: const ValueKey('class'),
       children: [
@@ -2886,7 +3091,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 style: GoogleFonts.inter(
                   fontSize: 16.sp,
                   fontWeight: FontWeight.w800,
-                  color: const Color(0xFF0F172A),
+                  color: colors.textPrimary,
                 ),
               ),
               SizedBox(height: 10.h),
@@ -2899,19 +3104,16 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     label: Text(level),
                     selected: selected,
                     onSelected: (_) => _selectEducationLevel(level),
-                    selectedColor: const Color(0xFFE8F8EF),
-                    backgroundColor: Colors.white,
+                    selectedColor: colors.selectedSurface,
+                    backgroundColor: colors.surface,
                     side: BorderSide(
-                      color: selected
-                          ? const Color(0xFF00A859)
-                          : const Color(0xFFE2E8F0),
+                      color: selected ? colors.brand : colors.border,
                     ),
                     labelStyle: GoogleFonts.inter(
                       fontSize: 13.sp,
                       fontWeight: FontWeight.w800,
-                      color: selected
-                          ? const Color(0xFF047857)
-                          : const Color(0xFF334155),
+                      color:
+                          selected ? colors.brandStrong : colors.textSecondary,
                     ),
                   );
                 }).toList(),
@@ -2923,11 +3125,19 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                   style: GoogleFonts.inter(
                     fontSize: 16.sp,
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFF0F172A),
+                    color: colors.textPrimary,
                   ),
                 ),
                 SizedBox(height: 10.h),
-                ..._visibleClasses.map(_buildClassCard),
+                if (visibleClasses.isEmpty)
+                  const _InfoBox(
+                    icon: Icons.info_outline_rounded,
+                    title: 'Nenhuma turma disponível',
+                    message:
+                        'Nenhuma turma disponível para este nível no momento.',
+                  )
+                else
+                  ...visibleClasses.map(_buildClassCard),
                 if (_isLoadingOffers) ...[
                   SizedBox(height: 8.h),
                   const _InfoBox(
@@ -3044,6 +3254,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     required String description,
     required VoidCallback onTap,
   }) {
+    final colors = _flowColors;
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16.r),
@@ -3052,16 +3264,16 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         width: double.infinity,
         padding: EdgeInsets.all(14.w),
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFF0FDF4) : Colors.white,
+          color: selected ? colors.selectedSurface : colors.surface,
           borderRadius: BorderRadius.circular(16.r),
           border: Border.all(
-            color: selected ? const Color(0xFF00A859) : const Color(0xFFE2E8F0),
+            color: selected ? colors.brand : colors.border,
             width: selected ? 1.8 : 1,
           ),
           boxShadow: selected
               ? [
                   BoxShadow(
-                    color: const Color(0xFF00A859).withValues(alpha: 0.10),
+                    color: colors.brand.withValues(alpha: 0.10),
                     blurRadius: 14,
                     offset: const Offset(0, 6),
                   ),
@@ -3075,8 +3287,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               selected
                   ? Icons.radio_button_checked_rounded
                   : Icons.radio_button_unchecked_rounded,
-              color:
-                  selected ? const Color(0xFF00A859) : const Color(0xFF94A3B8),
+              color: selected ? colors.brand : colors.textMuted,
               size: 24.sp,
             ),
             SizedBox(width: 10.w),
@@ -3089,7 +3300,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     style: GoogleFonts.inter(
                       fontSize: 16.sp,
                       fontWeight: FontWeight.w900,
-                      color: const Color(0xFF0F172A),
+                      color: colors.textPrimary,
                     ),
                   ),
                   SizedBox(height: 4.h),
@@ -3098,7 +3309,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     style: GoogleFonts.inter(
                       fontSize: 12.sp,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF475569),
+                      color: colors.textSecondary,
                     ),
                   ),
                   SizedBox(height: 8.h),
@@ -3122,7 +3333,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     style: GoogleFonts.inter(
                       fontSize: 12.sp,
                       height: 1.38,
-                      color: const Color(0xFF64748B),
+                      color: colors.textMuted,
                     ),
                   ),
                 ],
@@ -3260,6 +3471,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildSuccessStep() {
+    final colors = _flowColors;
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 28.w),
       child: Column(
@@ -3268,14 +3481,14 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           Container(
             width: 96.w,
             height: 96.w,
-            decoration: const BoxDecoration(
-              color: Color(0xFFE8F8EF),
+            decoration: BoxDecoration(
+              color: colors.selectedSurface,
               shape: BoxShape.circle,
             ),
             child: Icon(
               Icons.check_rounded,
               size: 54.sp,
-              color: const Color(0xFF00A859),
+              color: colors.brand,
             ),
           ),
           SizedBox(height: 28.h),
@@ -3286,7 +3499,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               fontSize: 28.sp,
               height: 1.12,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF0F172A),
+              color: colors.textPrimary,
             ),
           ),
           SizedBox(height: 14.h),
@@ -3296,7 +3509,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
             style: GoogleFonts.inter(
               fontSize: 15.sp,
               height: 1.45,
-              color: const Color(0xFF64748B),
+              color: colors.textMuted,
             ),
           ),
           if (_selectedEnrollmentOffer != null) ...[
@@ -3305,9 +3518,9 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               width: double.infinity,
               padding: EdgeInsets.all(14.w),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: colors.surfaceAlt,
                 borderRadius: BorderRadius.circular(16.r),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(color: colors.border),
               ),
               child: Text(
                 'Regime informado: ${_selectedEnrollmentOffer!.displayName}',
@@ -3315,7 +3528,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                 style: GoogleFonts.inter(
                   fontSize: 13.sp,
                   fontWeight: FontWeight.w800,
-                  color: const Color(0xFF1E293B),
+                  color: colors.textSecondary,
                 ),
               ),
             ),
@@ -3327,7 +3540,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
             child: ElevatedButton(
               onPressed: () => context.go('/'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00A859),
+                backgroundColor: colors.brand,
                 foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -3349,16 +3562,14 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildBottomBar() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colors = _flowColors;
 
     return Container(
       padding: EdgeInsets.fromLTRB(20.w, 12.h, 20.w, 18.h),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF111827) : Colors.white,
+        color: colors.footer,
         border: Border(
-          top: BorderSide(
-            color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
-          ),
+          top: BorderSide(color: colors.border),
         ),
       ),
       child: SizedBox(
@@ -3367,10 +3578,10 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         child: ElevatedButton(
           onPressed: _canUsePrimaryButton ? _handlePrimaryAction : null,
           style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF00A859),
-            disabledBackgroundColor: const Color(0xFFCBD5E1),
+            backgroundColor: colors.brand,
+            disabledBackgroundColor: colors.disabledButton,
             foregroundColor: Colors.white,
-            disabledForegroundColor: Colors.white,
+            disabledForegroundColor: colors.disabledButtonText,
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14.r),
@@ -3402,6 +3613,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     String label, {
     bool enabled = true,
   }) {
+    final colors = _flowColors;
     final selected = _primaryResponsibleType == value;
 
     return ChoiceChip(
@@ -3410,23 +3622,24 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       onSelected: enabled
           ? (_) => _setDraftState(() => _primaryResponsibleType = value)
           : null,
-      selectedColor: const Color(0xFFE8F8EF),
-      disabledColor: const Color(0xFFF1F5F9),
-      backgroundColor: Colors.white,
+      selectedColor: colors.selectedSurface,
+      disabledColor: colors.disabledSurface,
+      backgroundColor: colors.surface,
       side: BorderSide(
-        color: selected ? const Color(0xFF00A859) : const Color(0xFFE2E8F0),
+        color: selected ? colors.brand : colors.border,
       ),
       labelStyle: GoogleFonts.inter(
         fontSize: 13.sp,
         fontWeight: FontWeight.w800,
         color: enabled
-            ? (selected ? const Color(0xFF047857) : const Color(0xFF334155))
-            : const Color(0xFF94A3B8),
+            ? (selected ? colors.brandStrong : colors.textSecondary)
+            : colors.textMuted,
       ),
     );
   }
 
   Widget _buildEmailSuggestions() {
+    final colors = _flowColors;
     const domains = [
       '@gmail.com',
       '@hotmail.com',
@@ -3443,7 +3656,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           style: GoogleFonts.inter(
             fontSize: 13.sp,
             fontWeight: FontWeight.w700,
-            color: const Color(0xFF475569),
+            color: colors.textSecondary,
           ),
         ),
         SizedBox(height: 10.h),
@@ -3454,10 +3667,10 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
             return ActionChip(
               label: Text(domain),
               onPressed: () => _applyEmailDomain(domain),
-              backgroundColor: Colors.white,
-              side: const BorderSide(color: Color(0xFFE2E8F0)),
+              backgroundColor: colors.surface,
+              side: BorderSide(color: colors.border),
               labelStyle: GoogleFonts.inter(
-                color: const Color(0xFF1E293B),
+                color: colors.textSecondary,
                 fontWeight: FontWeight.w600,
               ),
             );
@@ -3472,13 +3685,15 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     required bool value,
     required ValueChanged<bool> onChanged,
   }) {
+    final colors = _flowColors;
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(14.w),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colors.surface,
         borderRadius: BorderRadius.circular(16.r),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: colors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3489,7 +3704,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               fontSize: 14.sp,
               height: 1.35,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF0F172A),
+              color: colors.textPrimary,
             ),
           ),
           SizedBox(height: 12.h),
@@ -3522,6 +3737,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     required bool selected,
     required VoidCallback onTap,
   }) {
+    final colors = _flowColors;
+
     return InkWell(
       borderRadius: BorderRadius.circular(12.r),
       onTap: onTap,
@@ -3530,10 +3747,10 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         height: 44.h,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? const Color(0xFFE8F8EF) : const Color(0xFFF8FAFC),
+          color: selected ? colors.selectedSurface : colors.surfaceAlt,
           borderRadius: BorderRadius.circular(12.r),
           border: Border.all(
-            color: selected ? const Color(0xFF00A859) : const Color(0xFFE2E8F0),
+            color: selected ? colors.brand : colors.border,
           ),
         ),
         child: Text(
@@ -3541,7 +3758,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           style: GoogleFonts.inter(
             fontSize: 14.sp,
             fontWeight: FontWeight.w800,
-            color: selected ? const Color(0xFF047857) : const Color(0xFF475569),
+            color: selected ? colors.brandStrong : colors.textSecondary,
           ),
         ),
       ),
@@ -3552,6 +3769,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     required List<String> options,
     required Set<String> selected,
   }) {
+    final colors = _flowColors;
+
     return Wrap(
       spacing: 8.w,
       runSpacing: 8.h,
@@ -3569,17 +3788,15 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
               }
             });
           },
-          selectedColor: const Color(0xFFE8F8EF),
-          backgroundColor: Colors.white,
+          selectedColor: colors.selectedSurface,
+          backgroundColor: colors.surface,
           side: BorderSide(
-            color:
-                isSelected ? const Color(0xFF00A859) : const Color(0xFFE2E8F0),
+            color: isSelected ? colors.brand : colors.border,
           ),
           labelStyle: GoogleFonts.inter(
             fontSize: 12.sp,
             fontWeight: FontWeight.w700,
-            color:
-                isSelected ? const Color(0xFF047857) : const Color(0xFF334155),
+            color: isSelected ? colors.brandStrong : colors.textSecondary,
           ),
         );
       }).toList(),
@@ -3597,6 +3814,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     ValueChanged<String>? onChanged,
     bool enabled = true,
   }) {
+    final colors = _flowColors;
+
     return TextFormField(
       controller: controller,
       validator: validator,
@@ -3608,7 +3827,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
       style: GoogleFonts.inter(
         fontSize: 15.sp,
         fontWeight: FontWeight.w600,
-        color: const Color(0xFF0F172A),
+        color: colors.textPrimary,
       ),
       decoration: _inputDecoration(label: label, icon: icon),
     );
@@ -3620,18 +3839,19 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     required List<String> items,
     required ValueChanged<String?> onChanged,
   }) {
+    final colors = _flowColors;
     final dropdownTextStyle = GoogleFonts.inter(
       fontSize: 15.sp,
       fontWeight: FontWeight.w600,
-      color: const Color(0xFF0F172A),
+      color: colors.textPrimary,
     );
 
     return DropdownButtonFormField<String>(
       initialValue: value,
       isExpanded: true,
-      dropdownColor: Colors.white,
-      iconEnabledColor: const Color(0xFF00A859),
-      iconDisabledColor: const Color(0xFF94A3B8),
+      dropdownColor: colors.surface,
+      iconEnabledColor: colors.brand,
+      iconDisabledColor: colors.textMuted,
       style: dropdownTextStyle,
       decoration: _inputDecoration(
         label: label,
@@ -3666,6 +3886,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildNeighborhoodField() {
+    final colors = _flowColors;
+
     return InkWell(
       borderRadius: BorderRadius.circular(16.r),
       onTap: _openNeighborhoodPicker,
@@ -3680,8 +3902,8 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
             fontSize: 15.sp,
             fontWeight: FontWeight.w600,
             color: _selectedNeighborhood == null
-                ? const Color(0xFF94A3B8)
-                : const Color(0xFF0F172A),
+                ? colors.textMuted
+                : colors.textPrimary,
           ),
         ),
       ),
@@ -3689,10 +3911,12 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Future<void> _openNeighborhoodPicker() async {
+    final colors = _flowColors;
+
     final selected = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: colors.surface,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24.r)),
       ),
@@ -3701,18 +3925,18 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
 
         return Theme(
           data: Theme.of(context).copyWith(
-            brightness: Brightness.light,
-            colorScheme: const ColorScheme.light(
-              primary: Color(0xFF00A859),
-              surface: Colors.white,
-              onSurface: Color(0xFF0F172A),
+            brightness: colors.isDark ? Brightness.dark : Brightness.light,
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+                  primary: colors.brand,
+                  surface: colors.surface,
+                  onSurface: colors.textPrimary,
+                ),
+            textSelectionTheme: TextSelectionThemeData(
+              cursorColor: colors.brand,
+              selectionColor: colors.brand.withValues(alpha: 0.22),
+              selectionHandleColor: colors.brand,
             ),
-            textSelectionTheme: const TextSelectionThemeData(
-              cursorColor: Color(0xFF00A859),
-              selectionColor: Color(0x5534D399),
-              selectionHandleColor: Color(0xFF00A859),
-            ),
-            dividerColor: const Color(0xFFE2E8F0),
+            dividerColor: colors.border,
           ),
           child: StatefulBuilder(
             builder: (context, setModalState) {
@@ -3738,24 +3962,24 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                           style: GoogleFonts.inter(
                             fontSize: 20.sp,
                             fontWeight: FontWeight.w800,
-                            color: const Color(0xFF0F172A),
+                            color: colors.textPrimary,
                           ),
                         ),
                         SizedBox(height: 12.h),
                         TextField(
                           autofocus: true,
-                          cursorColor: const Color(0xFF00A859),
+                          cursorColor: colors.brand,
                           style: GoogleFonts.inter(
                             fontSize: 15.sp,
                             fontWeight: FontWeight.w600,
-                            color: const Color(0xFF0F172A),
+                            color: colors.textPrimary,
                           ),
                           decoration: _inputDecoration(
                             label: 'Buscar bairro',
                             icon: Icons.search_rounded,
                           ).copyWith(
                             hintStyle: GoogleFonts.inter(
-                              color: const Color(0xFF94A3B8),
+                              color: colors.textMuted,
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -3766,9 +3990,9 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                         Expanded(
                           child: ListView.separated(
                             itemCount: filtered.length,
-                            separatorBuilder: (_, __) => const Divider(
+                            separatorBuilder: (_, __) => Divider(
                               height: 1,
-                              color: Color(0xFFE2E8F0),
+                              color: colors.border,
                             ),
                             itemBuilder: (context, index) {
                               final item = filtered[index];
@@ -3781,17 +4005,17 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                                     fontWeight: isSelected
                                         ? FontWeight.w800
                                         : FontWeight.w600,
-                                    color: const Color(0xFF0F172A),
+                                    color: colors.textPrimary,
                                   ),
                                 ),
                                 trailing: isSelected
-                                    ? const Icon(
+                                    ? Icon(
                                         Icons.check_circle_rounded,
-                                        color: Color(0xFF00A859),
+                                        color: colors.brand,
                                       )
                                     : null,
                                 selected: isSelected,
-                                selectedTileColor: const Color(0xFFF0FDF4),
+                                selectedTileColor: colors.selectedSurface,
                                 onTap: () => Navigator.of(context).pop(item),
                               );
                             },
@@ -3818,23 +4042,25 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
     required String label,
     required IconData icon,
   }) {
+    final colors = _flowColors;
+
     return InputDecoration(
       labelText: label,
-      prefixIcon: Icon(icon, color: const Color(0xFF00A859)),
+      prefixIcon: Icon(icon, color: colors.brand),
       filled: true,
-      fillColor: Colors.white,
+      fillColor: colors.surface,
       contentPadding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 16.h),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16.r),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderSide: BorderSide(color: colors.border),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16.r),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderSide: BorderSide(color: colors.border),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16.r),
-        borderSide: const BorderSide(color: Color(0xFF00A859), width: 1.6),
+        borderSide: BorderSide(color: colors.brand, width: 1.6),
       ),
       errorBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16.r),
@@ -3845,7 +4071,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
         borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.6),
       ),
       labelStyle: GoogleFonts.inter(
-        color: const Color(0xFF64748B),
+        color: colors.textMuted,
         fontWeight: FontWeight.w600,
       ),
       errorStyle: GoogleFonts.inter(fontWeight: FontWeight.w600),
@@ -3853,6 +4079,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
   }
 
   Widget _buildClassCard(PublicRegistrationClassModel classItem) {
+    final colors = _flowColors;
     final selected = classItem.id == _selectedClass?.id;
     final enabled = classItem.isAvailable;
 
@@ -3865,17 +4092,16 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
           duration: const Duration(milliseconds: 180),
           padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
           decoration: BoxDecoration(
-            color: enabled ? Colors.white : const Color(0xFFF1F5F9),
+            color: enabled ? colors.surface : colors.disabledSurface,
             borderRadius: BorderRadius.circular(14.r),
             border: Border.all(
-              color:
-                  selected ? const Color(0xFF00A859) : const Color(0xFFE2E8F0),
+              color: selected ? colors.brand : colors.border,
               width: selected ? 1.8 : 1,
             ),
             boxShadow: selected
                 ? [
                     BoxShadow(
-                      color: const Color(0xFF00A859).withValues(alpha: 0.12),
+                      color: colors.brand.withValues(alpha: 0.12),
                       blurRadius: 12,
                       offset: const Offset(0, 5),
                     ),
@@ -3894,9 +4120,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                           ? Icons.radio_button_checked_rounded
                           : Icons.radio_button_unchecked_rounded,
                       size: 22.sp,
-                      color: selected
-                          ? const Color(0xFF00A859)
-                          : const Color(0xFF94A3B8),
+                      color: selected ? colors.brand : colors.textMuted,
                     ),
                     SizedBox(width: 8.w),
                     Expanded(
@@ -3905,7 +4129,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                         style: GoogleFonts.inter(
                           fontSize: 15.sp,
                           fontWeight: FontWeight.w800,
-                          color: const Color(0xFF0F172A),
+                          color: colors.textPrimary,
                         ),
                       ),
                     ),
@@ -3920,7 +4144,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     style: GoogleFonts.inter(
                       fontSize: 12.sp,
                       fontWeight: FontWeight.w600,
-                      color: const Color(0xFF475569),
+                      color: colors.textSecondary,
                     ),
                   ),
                 ),
@@ -3932,7 +4156,7 @@ class _PublicRegistrationScreenState extends State<PublicRegistrationScreen> {
                     style: GoogleFonts.inter(
                       fontSize: 12.sp,
                       fontWeight: FontWeight.w700,
-                      color: const Color(0xFF1E293B),
+                      color: colors.textPrimary,
                     ),
                   ),
                 ),
@@ -4059,13 +4283,15 @@ class _SchoolLogoPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _RegistrationFlowColors.of(context);
+
     return Center(
       child: Text(
         initials,
         style: GoogleFonts.inter(
           fontSize: 18.sp,
           fontWeight: FontWeight.w900,
-          color: const Color(0xFF047857),
+          color: colors.brandStrong,
         ),
       ),
     );
@@ -4108,6 +4334,8 @@ class _StepIntro extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _RegistrationFlowColors.of(context);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -4115,10 +4343,10 @@ class _StepIntro extends StatelessWidget {
           width: 54.w,
           height: 54.w,
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F8EF),
+            color: colors.iconSurface,
             borderRadius: BorderRadius.circular(18.r),
           ),
-          child: Icon(icon, color: const Color(0xFF00A859), size: 28.sp),
+          child: Icon(icon, color: colors.brand, size: 28.sp),
         ),
         SizedBox(height: 20.h),
         Text(
@@ -4127,7 +4355,7 @@ class _StepIntro extends StatelessWidget {
             fontSize: 28.sp,
             height: 1.08,
             fontWeight: FontWeight.w800,
-            color: const Color(0xFF0F172A),
+            color: colors.textPrimary,
           ),
         ),
         SizedBox(height: 10.h),
@@ -4136,7 +4364,7 @@ class _StepIntro extends StatelessWidget {
           style: GoogleFonts.inter(
             fontSize: 15.sp,
             height: 1.45,
-            color: const Color(0xFF64748B),
+            color: colors.textMuted,
           ),
         ),
       ],
@@ -4163,18 +4391,20 @@ class _InfoBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _RegistrationFlowColors.of(context);
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colors.surface,
         borderRadius: BorderRadius.circular(18.r),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: colors.border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: const Color(0xFF00A859), size: 26.sp),
+          Icon(icon, color: colors.brand, size: 26.sp),
           SizedBox(width: 12.w),
           Expanded(
             child: Column(
@@ -4184,7 +4414,7 @@ class _InfoBox extends StatelessWidget {
                   title,
                   style: GoogleFonts.inter(
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFF0F172A),
+                    color: colors.textPrimary,
                   ),
                 ),
                 SizedBox(height: 4.h),
@@ -4193,7 +4423,7 @@ class _InfoBox extends StatelessWidget {
                   style: GoogleFonts.inter(
                     fontSize: 13.sp,
                     height: 1.38,
-                    color: const Color(0xFF64748B),
+                    color: colors.textMuted,
                   ),
                 ),
                 if (actionLabel != null && onAction != null) ...[
@@ -4203,7 +4433,7 @@ class _InfoBox extends StatelessWidget {
                     style: TextButton.styleFrom(
                       padding: EdgeInsets.zero,
                       minimumSize: Size(44.w, 36.h),
-                      foregroundColor: const Color(0xFF00A859),
+                      foregroundColor: colors.brand,
                     ),
                     child: Text(
                       actionLabel!,
@@ -4227,11 +4457,13 @@ class _InfoBox extends StatelessWidget {
 class _ReadOnlyLocationPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    final colors = _RegistrationFlowColors.of(context);
+
     return Container(
       width: double.infinity,
       padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 12.h),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
+        color: colors.infoSurface,
         borderRadius: BorderRadius.circular(14.r),
       ),
       child: Text(
@@ -4239,7 +4471,7 @@ class _ReadOnlyLocationPill extends StatelessWidget {
         style: GoogleFonts.inter(
           fontSize: 13.sp,
           fontWeight: FontWeight.w700,
-          color: const Color(0xFF1E40AF),
+          color: colors.infoText,
         ),
       ),
     );
@@ -4253,12 +4485,13 @@ class _AvailabilityPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _RegistrationFlowColors.of(context);
     final unavailable = status == 'Indisponível';
 
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
       decoration: BoxDecoration(
-        color: unavailable ? const Color(0xFFFEE2E2) : const Color(0xFFE8F8EF),
+        color: unavailable ? colors.dangerSurface : colors.selectedSurface,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
@@ -4266,8 +4499,7 @@ class _AvailabilityPill extends StatelessWidget {
         style: GoogleFonts.inter(
           fontSize: 12.sp,
           fontWeight: FontWeight.w800,
-          color:
-              unavailable ? const Color(0xFFB91C1C) : const Color(0xFF047857),
+          color: unavailable ? colors.dangerText : colors.brandStrong,
         ),
       ),
     );
@@ -4285,23 +4517,25 @@ class _RegimeInfoPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _RegistrationFlowColors.of(context);
+
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 9.w, vertical: 6.h),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
+        color: colors.infoSurface,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14.sp, color: const Color(0xFF1D4ED8)),
+          Icon(icon, size: 14.sp, color: colors.infoText),
           SizedBox(width: 5.w),
           Text(
             label,
             style: GoogleFonts.inter(
               fontSize: 11.sp,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF1E40AF),
+              color: colors.infoText,
             ),
           ),
         ],
@@ -4321,14 +4555,16 @@ class _ReviewSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = _RegistrationFlowColors.of(context);
+
     return Container(
       width: double.infinity,
       margin: EdgeInsets.only(bottom: 12.h),
       padding: EdgeInsets.all(16.w),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colors.surface,
         borderRadius: BorderRadius.circular(18.r),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: colors.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4338,7 +4574,7 @@ class _ReviewSection extends StatelessWidget {
             style: GoogleFonts.inter(
               fontSize: 15.sp,
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF0F172A),
+              color: colors.textPrimary,
             ),
           ),
           SizedBox(height: 10.h),
@@ -4355,7 +4591,7 @@ class _ReviewSection extends StatelessWidget {
                       style: GoogleFonts.inter(
                         fontSize: 12.sp,
                         fontWeight: FontWeight.w700,
-                        color: const Color(0xFF64748B),
+                        color: colors.textMuted,
                       ),
                     ),
                   ),
@@ -4365,7 +4601,7 @@ class _ReviewSection extends StatelessWidget {
                       style: GoogleFonts.inter(
                         fontSize: 13.sp,
                         fontWeight: FontWeight.w700,
-                        color: const Color(0xFF1E293B),
+                        color: colors.textSecondary,
                       ),
                     ),
                   ),

@@ -65,6 +65,7 @@ class _TeacherClassCardState extends State<TeacherClassCard> {
     final statusBg = const Color(0xFFE8F5E9);
 
     return Container(
+      constraints: BoxConstraints(minHeight: 190.h),
       decoration: BoxDecoration(
         color: cardBg,
         borderRadius: BorderRadius.circular(12.r), // Arredondamento suave
@@ -142,7 +143,7 @@ class _TeacherClassCardState extends State<TeacherClassCard> {
                   ],
                 ),
 
-                const Spacer(),
+                SizedBox(height: 18.h),
 
                 // --- TAG DE ALUNOS ---
                 Container(

@@ -8,10 +8,10 @@ import 'package:academyhub_mobile/model/model_alunos.dart';
 import 'package:academyhub_mobile/model/term_model.dart';
 import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
-import 'package:academyhub_mobile/providers/horario_provider.dart';
 import 'package:academyhub_mobile/services/horario_service.dart';
 import 'package:academyhub_mobile/services/student_service.dart';
 import 'package:academyhub_mobile/services/term_service.dart';
+import 'package:academyhub_mobile/util/teacher_class_context_helper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -41,6 +41,7 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
 
   bool _isLoading = true;
   String _loadingMessage = "Preparando seu painel...";
+  String? _loadError;
 
   TermModel? _currentTerm;
   List<HorarioModel> _allTeacherClasses = [];
@@ -113,12 +114,20 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
         setState(() {
           _isLoading = false;
           _loadingMessage = "Não foi possível identificar o usuário.";
+          _loadError = _loadingMessage;
         });
       }
       return;
     }
 
     try {
+      if (mounted) {
+        setState(() {
+          _isLoading = true;
+          _loadError = null;
+          _loadingMessage = "Preparando seu painel...";
+        });
+      }
       bool isGestor = false;
       try {
         final roles = (user.roles as List<dynamic>)
@@ -132,70 +141,79 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
 
       final academicCalendar =
           Provider.of<AcademicCalendarProvider>(context, listen: false);
-      final horarioProvider =
-          Provider.of<HorarioProvider>(context, listen: false);
       final selectedSchoolYearId = academicCalendar.selectedSchoolYear?.id;
       final termFilter = selectedSchoolYearId != null
           ? {'schoolYearId': selectedSchoolYearId}
           : <String, String>{};
-      final horarioFilter =
-          isGestor ? <String, String>{} : {'teacherId': user.id};
 
       final cachedTerms = academicCalendar.terms;
-      final cachedHorarios = horarioProvider.horarios;
       final termsMatchSelectedYear = selectedSchoolYearId == null ||
           cachedTerms
               .every((term) => term.schoolYearId == selectedSchoolYearId);
 
-      final Future<List<TermModel>> termsFuture =
-          cachedTerms.isNotEmpty && termsMatchSelectedYear
-              ? Future.value(cachedTerms)
-              : _termService.find(token, termFilter);
+      final terms = cachedTerms.isNotEmpty && termsMatchSelectedYear
+          ? cachedTerms
+          : await _termService.find(token, termFilter);
+      final term = TeacherClassContextHelper.getCurrentTerm(terms);
+      final referenceTerm = TeacherClassContextHelper.getReferenceTerm(
+        terms,
+        currentTerm: term,
+      );
 
-      final Future<List<HorarioModel>> horariosFuture =
-          cachedHorarios.isNotEmpty
-              ? Future.value(
-                  isGestor
-                      ? cachedHorarios
-                      : cachedHorarios
-                          .where((h) => h.teacherId == user.id)
-                          .toList(),
-                )
-              : _horarioService.getHorarios(
-                  token,
-                  filter: horarioFilter.isEmpty ? null : horarioFilter,
-                );
-
-      final results = await Future.wait([termsFuture, horariosFuture]);
-
-      final terms = results[0] as List<TermModel>;
-      final teacherHorarios = results[1] as List<HorarioModel>;
-      final now = DateTime.now();
-
-      TermModel? term;
-      for (final candidate in terms) {
-        final isWithinRange = (now.isAfter(candidate.startDate) ||
-                _isSameDay(now, candidate.startDate)) &&
-            (now.isBefore(candidate.endDate) ||
-                _isSameDay(now, candidate.endDate));
-        if (isWithinRange) {
-          term = candidate;
-          break;
-        }
-      }
-
-      term ??= terms.isNotEmpty ? terms.first : null;
       _currentTerm = term;
+      TeacherClassContextHelper.logContext(
+        screen: 'dashboard',
+        teacherId: user.id,
+        schoolId: user.schoolId,
+        currentTerm: term,
+        referenceTerm: referenceTerm,
+      );
 
+      final horarioFilter = <String, String>{};
+      if (!isGestor) {
+        horarioFilter['teacherId'] = user.id;
+      }
       if (term != null) {
-        _allTeacherClasses =
-            teacherHorarios.where((h) => h.termId == term!.id).toList();
+        horarioFilter['termId'] = term.id;
+        horarioFilter['resolveInherited'] = 'true';
+        final teacherHorarios = await _horarioService.getHorarios(
+          token,
+          filter: horarioFilter,
+          debugScreen: 'dashboard',
+        );
+        _allTeacherClasses = TeacherClassContextHelper.logFilteredHorarios(
+          screen: 'dashboard',
+          before: teacherHorarios,
+          after: TeacherClassContextHelper.effectiveHorarios(
+            teacherHorarios,
+            term,
+            user: user,
+          ),
+          currentTerm: term,
+        );
       } else {
-        _allTeacherClasses = teacherHorarios;
-        _loadingMessage = "Nenhum período letivo ativo.";
+        final teacherHorarios = await _horarioService.getHorarios(
+          token,
+          filter: horarioFilter,
+          debugScreen: 'dashboard_assignments',
+        );
+        _allTeacherClasses = TeacherClassContextHelper.assignedHorarios(
+          teacherHorarios,
+          terms,
+          user: user,
+        );
+        _loadingMessage = "Fora do período letivo.";
       }
 
       _processScheduleLogic();
+      TeacherClassContextHelper.logScreenResult(
+        screen: 'Dashboard',
+        isLoading: false,
+        totalVisibleClasses:
+            _displayClasses.map((horario) => horario.classId).toSet().length,
+        totalVisibleSchedules: _displayClasses.length,
+        emptyStateShown: _displayClasses.isEmpty,
+      );
 
       if (mounted) {
         setState(() => _isLoading = false);
@@ -204,11 +222,11 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
 
       unawaited(_loadBirthdays(token));
     } catch (e) {
-      debugPrint("Erro dashboard professor: $e");
+      debugPrint('[TeacherMobile][DashboardError] ${e.runtimeType}');
       if (mounted) {
         setState(() {
           _isLoading = false;
-          _loadingMessage = "Erro ao carregar dados.";
+          _loadError = "Não foi possível carregar sua agenda. Tente novamente.";
         });
       }
     }
@@ -239,6 +257,17 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
   }
 
   void _processScheduleLogic() {
+    if (_currentTerm == null) {
+      _classesTodayCount = 0;
+      _completedTodayCount = 0;
+      _displayClasses = [];
+      _currentClass = null;
+      _nextClass = null;
+      _isClassLive = false;
+      _timelineTitle = "Sem aulas agendadas";
+      return;
+    }
+
     final now = DateTime.now();
     final todayWeekday = now.weekday;
 
@@ -319,10 +348,6 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
     return int.parse(parts[0]) * 60 + int.parse(parts[1]);
   }
 
-  bool _isSameDay(DateTime a, DateTime b) {
-    return a.year == b.year && a.month == b.month && a.day == b.day;
-  }
-
   String _getWeekdayName(int day) {
     const days = {
       1: 'Segunda',
@@ -383,68 +408,127 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
       backgroundColor: background,
       body: _isLoading
           ? _buildLoadingState(textSecondary)
-          : FadeTransition(
-              opacity: _fadeAnim,
-              child: SlideTransition(
-                position: _slideAnim,
-                child: CustomScrollView(
-                  physics: const BouncingScrollPhysics(),
-                  slivers: [
-                    SliverPadding(
-                      padding: EdgeInsets.fromLTRB(18.w, 24.h, 18.w, 120.h),
-                      sliver: SliverList(
-                        delegate: SliverChildListDelegate(
-                          [
-                            _buildTopHeader(
-                              auth: auth,
-                              firstName: firstName,
-                              formattedDate: formattedDate,
-                              textPrimary: textPrimary,
-                              textSecondary: textSecondary,
-                              isDark: isDark,
-                            ),
-                            SizedBox(height: 18.h),
-                            _buildMainStatusCard(
-                                surface: surface, isDark: isDark),
-                            SizedBox(height: 18.h),
-                            _buildQuickStatsRow(
-                              surface: surface,
-                              textPrimary: textPrimary,
-                              textSecondary: textSecondary,
-                              isDark: isDark,
-                            ),
-                            SizedBox(height: 22.h),
-                            _buildSectionHeader(
-                              title: _timelineTitle,
-                              subtitle: _displayClasses.isEmpty
-                                  ? "Organização do seu dia letivo"
-                                  : "${_displayClasses.length} itens na sua visualização",
-                              icon: PhosphorIcons.calendar_blank,
-                              textPrimary: textPrimary,
-                              textSecondary: textSecondary,
-                            ),
-                            SizedBox(height: 14.h),
-                            _displayClasses.isEmpty
-                                ? _buildEmptyAgendaCard(
-                                    surface: surface,
+          : _loadError != null
+              ? _buildDashboardError(
+                  textPrimary: textPrimary,
+                  textSecondary: textSecondary,
+                )
+              : FadeTransition(
+                  opacity: _fadeAnim,
+                  child: SlideTransition(
+                    position: _slideAnim,
+                    child: CustomScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      slivers: [
+                        SliverPadding(
+                          padding: EdgeInsets.fromLTRB(18.w, 24.h, 18.w, 120.h),
+                          sliver: SliverList(
+                            delegate: SliverChildListDelegate(
+                              [
+                                _buildTopHeader(
+                                  auth: auth,
+                                  firstName: firstName,
+                                  formattedDate: formattedDate,
+                                  textPrimary: textPrimary,
+                                  textSecondary: textSecondary,
+                                  isDark: isDark,
+                                ),
+                                SizedBox(height: 18.h),
+                                _buildMainStatusCard(
+                                    surface: surface, isDark: isDark),
+                                SizedBox(height: 18.h),
+                                _buildQuickStatsRow(
+                                  surface: surface,
+                                  textPrimary: textPrimary,
+                                  textSecondary: textSecondary,
+                                  isDark: isDark,
+                                ),
+                                SizedBox(height: 22.h),
+                                _buildSectionHeader(
+                                  title: _timelineTitle,
+                                  subtitle: _displayClasses.isEmpty
+                                      ? "Organização do seu dia letivo"
+                                      : "${_displayClasses.length} itens na sua visualização",
+                                  icon: PhosphorIcons.calendar_blank,
+                                  textPrimary: textPrimary,
+                                  textSecondary: textSecondary,
+                                ),
+                                SizedBox(height: 14.h),
+                                _displayClasses.isEmpty
+                                    ? _buildEmptyAgendaCard(
+                                        surface: surface,
+                                        textPrimary: textPrimary,
+                                        textSecondary: textSecondary,
+                                        isDark: isDark,
+                                      )
+                                    : SizedBox(
+                                        height: 220.h,
+                                        child: ListView.separated(
+                                          physics:
+                                              const BouncingScrollPhysics(),
+                                          scrollDirection: Axis.horizontal,
+                                          itemCount: _displayClasses.length,
+                                          separatorBuilder: (_, __) =>
+                                              SizedBox(width: 12.w),
+                                          itemBuilder: (context, index) {
+                                            final aula = _displayClasses[index];
+                                            return TweenAnimationBuilder<
+                                                double>(
+                                              tween: Tween(begin: 0.96, end: 1),
+                                              duration: Duration(
+                                                milliseconds:
+                                                    300 + (index * 80),
+                                              ),
+                                              curve: Curves.easeOut,
+                                              builder: (context, value, child) {
+                                                return Transform.scale(
+                                                  scale: value,
+                                                  child: child,
+                                                );
+                                              },
+                                              child: _buildTimelineCard(
+                                                aula,
+                                                surface,
+                                                isDark,
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                SizedBox(height: 22.h),
+                                _buildFocusInsightCard(
+                                  surface: surface,
+                                  textPrimary: textPrimary,
+                                  textSecondary: textSecondary,
+                                  isDark: isDark,
+                                ),
+                                SizedBox(height: 22.h),
+                                if (_birthdayStudents.isNotEmpty) ...[
+                                  _buildSectionHeader(
+                                    title: "Aniversariantes do Mês",
+                                    subtitle:
+                                        "${_birthdayStudents.length} aluno(s) celebrando neste mês",
+                                    icon: PhosphorIcons.cake_fill,
                                     textPrimary: textPrimary,
                                     textSecondary: textSecondary,
-                                    isDark: isDark,
-                                  )
-                                : SizedBox(
-                                    height: 164.h,
+                                    iconColor: const Color(0xFFF59E0B),
+                                  ),
+                                  SizedBox(height: 14.h),
+                                  SizedBox(
+                                    height: 156.h,
                                     child: ListView.separated(
                                       physics: const BouncingScrollPhysics(),
                                       scrollDirection: Axis.horizontal,
-                                      itemCount: _displayClasses.length,
+                                      itemCount: _birthdayStudents.length,
                                       separatorBuilder: (_, __) =>
                                           SizedBox(width: 12.w),
                                       itemBuilder: (context, index) {
-                                        final aula = _displayClasses[index];
+                                        final student =
+                                            _birthdayStudents[index];
                                         return TweenAnimationBuilder<double>(
-                                          tween: Tween(begin: 0.96, end: 1),
+                                          tween: Tween(begin: 0.94, end: 1),
                                           duration: Duration(
-                                            milliseconds: 300 + (index * 80),
+                                            milliseconds: 320 + (index * 70),
                                           ),
                                           curve: Curves.easeOut,
                                           builder: (context, value, child) {
@@ -453,8 +537,8 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
                                               child: child,
                                             );
                                           },
-                                          child: _buildTimelineCard(
-                                            aula,
+                                          child: _buildBirthdayCard(
+                                            student,
                                             surface,
                                             isDark,
                                           ),
@@ -462,65 +546,15 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
                                       },
                                     ),
                                   ),
-                            SizedBox(height: 22.h),
-                            _buildFocusInsightCard(
-                              surface: surface,
-                              textPrimary: textPrimary,
-                              textSecondary: textSecondary,
-                              isDark: isDark,
+                                ],
+                              ],
                             ),
-                            SizedBox(height: 22.h),
-                            if (_birthdayStudents.isNotEmpty) ...[
-                              _buildSectionHeader(
-                                title: "Aniversariantes do Mês",
-                                subtitle:
-                                    "${_birthdayStudents.length} aluno(s) celebrando neste mês",
-                                icon: PhosphorIcons.cake_fill,
-                                textPrimary: textPrimary,
-                                textSecondary: textSecondary,
-                                iconColor: const Color(0xFFF59E0B),
-                              ),
-                              SizedBox(height: 14.h),
-                              SizedBox(
-                                height: 156.h,
-                                child: ListView.separated(
-                                  physics: const BouncingScrollPhysics(),
-                                  scrollDirection: Axis.horizontal,
-                                  itemCount: _birthdayStudents.length,
-                                  separatorBuilder: (_, __) =>
-                                      SizedBox(width: 12.w),
-                                  itemBuilder: (context, index) {
-                                    final student = _birthdayStudents[index];
-                                    return TweenAnimationBuilder<double>(
-                                      tween: Tween(begin: 0.94, end: 1),
-                                      duration: Duration(
-                                        milliseconds: 320 + (index * 70),
-                                      ),
-                                      curve: Curves.easeOut,
-                                      builder: (context, value, child) {
-                                        return Transform.scale(
-                                          scale: value,
-                                          child: child,
-                                        );
-                                      },
-                                      child: _buildBirthdayCard(
-                                        student,
-                                        surface,
-                                        isDark,
-                                      ),
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ],
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
     );
   }
 
@@ -547,6 +581,56 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildDashboardError({
+    required Color textPrimary,
+    required Color textSecondary,
+  }) {
+    return Semantics(
+      liveRegion: true,
+      label: _loadError,
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.all(24.w),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                PhosphorIcons.warning_circle,
+                color: const Color(0xFFF59E0B),
+                size: 38.sp,
+              ),
+              SizedBox(height: 14.h),
+              Text(
+                _loadError!,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.w700,
+                  color: textPrimary,
+                ),
+              ),
+              SizedBox(height: 8.h),
+              Text(
+                'Sua ausência de dados não será tratada como agenda vazia.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 13.sp,
+                  color: textSecondary,
+                ),
+              ),
+              SizedBox(height: 18.h),
+              ElevatedButton.icon(
+                onPressed: _fetchDashboardData,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Tentar novamente'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1220,7 +1304,7 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
 
     return Container(
       width: 212.w,
-      padding: EdgeInsets.all(16.sp),
+      padding: EdgeInsets.all(14.sp),
       decoration: BoxDecoration(
         color: surface,
         borderRadius: BorderRadius.circular(22.r),
@@ -1274,19 +1358,19 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
                 ),
             ],
           ),
-          SizedBox(height: 14.h),
+          SizedBox(height: 10.h),
           Text(
             aula.subject.name,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: GoogleFonts.sairaCondensed(
-              fontSize: 23.sp,
+              fontSize: 21.sp,
               height: 1,
               fontWeight: FontWeight.w800,
               color: isDark ? Colors.white : _academyBlack,
             ),
           ),
-          SizedBox(height: 8.h),
+          SizedBox(height: 6.h),
           Text(
             aula.classInfo.name,
             maxLines: 1,
@@ -1297,7 +1381,7 @@ class _TeacherDashboardViewState extends State<TeacherDashboardView>
               color: isDark ? Colors.white70 : Colors.blueGrey[600],
             ),
           ),
-          const Spacer(),
+          SizedBox(height: 12.h),
           Row(
             children: [
               Container(

@@ -5,6 +5,9 @@ import 'package:academyhub_mobile/model/public_enrollment_offer_model.dart';
 import 'package:academyhub_mobile/model/public_registration_class_model.dart';
 import 'package:http/http.dart' as http;
 
+const bool _visualMockEnabled =
+    bool.fromEnvironment('PUBLIC_REGISTRATION_VISUAL_MOCK');
+
 class PublicRegistrationException implements Exception {
   final String message;
 
@@ -18,6 +21,19 @@ class PublicRegistrationService {
   Future<PublicRegistrationSchoolContext> fetchPublicContext(
     String schoolId,
   ) async {
+    if (_visualMockEnabled) {
+      return PublicRegistrationSchoolContext.fromJson(
+        {
+          'school': {
+            'id': schoolId,
+            'name': 'Escola Sossego da Mamãe',
+            'logoUrl': null,
+          },
+        },
+        fallbackId: schoolId,
+      );
+    }
+
     final url = Uri.parse(
       '${ApiConfig.apiUrl}/registration-requests/public/$schoolId/context',
     );
@@ -63,6 +79,50 @@ class PublicRegistrationService {
   Future<List<PublicRegistrationClassModel>> fetchPublicClasses(
     String schoolId,
   ) async {
+    if (_visualMockEnabled) {
+      return [
+        PublicRegistrationClassModel.fromJson({
+          'id': 'mock-class-infantil-1b',
+          'name': '1ºB',
+          'educationLevel': 'Educação Infantil',
+          'grade': '1',
+          'shift': 'Matutino',
+          'startTime': '07:30',
+          'endTime': '12:00',
+          'monthlyFee': 350,
+          'availabilityStatus': 'available',
+        }),
+        PublicRegistrationClassModel.fromJson({
+          'id': 'mock-class-fundamental-2a',
+          'name': '2ºA',
+          'educationLevel': 'Ensino Fundamental I',
+          'grade': '2',
+          'shift': 'Matutino',
+          'startTime': '07:30',
+          'endTime': '15:20',
+          'monthlyFee': 420,
+          'availabilityStatus': 'few_slots',
+        }),
+        PublicRegistrationClassModel.fromJson({
+          'id': 'mock-class-fundamental-3c',
+          'name': '3ºC',
+          'educationLevel': 'Ensino Fundamental I',
+          'grade': '3',
+          'shift': 'Vespertino',
+          'startTime': '13:00',
+          'endTime': '17:30',
+          'monthlyFee': 390,
+          'availabilityStatus': 'unavailable',
+        }),
+        PublicRegistrationClassModel.fromJson({
+          'id': '',
+          'name': 'Ensino Médio',
+          'educationLevel': 'Ensino Médio',
+          'availabilityStatus': 'unavailable',
+        }),
+      ];
+    }
+
     final url = Uri.parse(
       '${ApiConfig.apiUrl}/registration-requests/public/$schoolId/classes',
     );
@@ -105,6 +165,25 @@ class PublicRegistrationService {
     required String schoolId,
     required String classId,
   }) async {
+    if (_visualMockEnabled) {
+      if (classId == 'mock-class-infantil-1b') {
+        return [
+          PublicEnrollmentOfferModel.fromJson({
+            'id': 'mock-offer-full-time',
+            'name': 'Período integral',
+            'type': 'full_time',
+            'description': 'Rotina ampliada com acompanhamento pedagógico.',
+            'startTime': '07:30',
+            'endTime': '17:30',
+            'monthlyFee': 680,
+            'pricingMode': 'total',
+            'permanenceClassMode': 'optional',
+          }),
+        ];
+      }
+      return const [];
+    }
+
     final url = Uri.parse(
       '${ApiConfig.apiUrl}/registration-requests/public/$schoolId/offers',
     ).replace(queryParameters: {'classId': classId});
@@ -145,6 +224,14 @@ class PublicRegistrationService {
   }
 
   Future<void> submitRegistrationRequest(Map<String, dynamic> data) async {
+    if (_visualMockEnabled) {
+      // Used only by manual visual validation with --dart-define.
+      // ignore: avoid_print
+      print('[PublicRegistrationVisualMock] payload=$data');
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+      return;
+    }
+
     final url = Uri.parse(
       '${ApiConfig.apiUrl}/registration-requests/public/submit',
     );

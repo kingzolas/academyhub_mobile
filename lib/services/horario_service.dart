@@ -19,11 +19,23 @@ class HorarioService {
 
   /// Busca horários com base em filtros.
   Future<List<HorarioModel>> getHorarios(String token,
-      {Map<String, String>? filter}) async {
+      {Map<String, String>? filter, String debugScreen = 'unknown'}) async {
     final url = Uri.parse(_baseUrl).replace(queryParameters: filter);
-    debugPrint('[HorarioService.get] Buscando em: $url');
+    debugPrint('[TeacherMobile][HorariosRequest] '
+        'screen=$debugScreen '
+        'url=$url '
+        'teacherId=${filter?['teacherId'] ?? '-'} '
+        'schoolId=${filter?['schoolId'] ?? '-'} '
+        'termId=${filter?['termId'] ?? '-'} '
+        'resolveInherited=${filter?['resolveInherited'] ?? 'false'}');
     try {
       final response = await ApiClient.get(url, headers: _getHeaders(token));
+      if (kDebugMode) {
+        debugPrint(
+          '[TeacherMobile][HorariosHttp] screen=$debugScreen '
+          'status=${response.statusCode}',
+        );
+      }
       final responseData = json.decode(utf8.decode(response.bodyBytes));
 
       if (response.statusCode == 200) {
@@ -35,24 +47,27 @@ class HorarioService {
           try {
             horarios.add(HorarioModel.fromJson(jsonItem));
           } catch (e) {
-            debugPrint('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-            debugPrint('!!! ERRO AO PARSEAR HorarioModel.fromJson !!!');
-            debugPrint('!!! JSON com Erro: $jsonItem');
-            debugPrint('!!! Erro: $e');
-            debugPrint('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+            if (kDebugMode) {
+              debugPrint(
+                '[TeacherMobile][HorarioParseError] '
+                'errorType=${e.runtimeType}',
+              );
+            }
           }
         }
-        debugPrint(
-            '[HorarioService.get] Sucesso. ${horarios.length} horários parseados.');
+        debugPrint('[TeacherMobile][HorariosResponse] '
+            'screen=$debugScreen totalReceived=${list.length} '
+            'totalParsed=${horarios.length}');
         return horarios;
         // --- [FIM DO DEBUG] ---
       } else {
-        debugPrint(
-            '[HorarioService.get] Erro ${response.statusCode}: ${response.body}');
+        debugPrint('[HorarioService.get] Erro ${response.statusCode}');
         throw Exception(responseData['message'] ?? 'Erro ao buscar horários.');
       }
     } catch (e) {
-      debugPrint('[HorarioService.get] Catch Error: $e');
+      debugPrint(
+        '[TeacherMobile][HorariosRequestError] errorType=${e.runtimeType}',
+      );
       throw Exception('Falha na comunicação ao buscar horários.');
     }
   }

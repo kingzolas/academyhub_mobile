@@ -21,7 +21,8 @@ class PublicRegistrationClassModel {
     this.monthlyFee,
   });
 
-  bool get isAvailable => availabilityStatus == 'available';
+  bool get isAvailable =>
+      availabilityStatus == 'available' || availabilityStatus == 'few_slots';
 
   String get availabilityLabel {
     switch (availabilityStatus) {

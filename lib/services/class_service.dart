@@ -58,19 +58,27 @@ class ClassService {
   Future<List<ClassModel>> getAllClasses(String? token,
       {Map<String, String>? filter}) async {
     final url = Uri.parse(_baseUrl).replace(queryParameters: filter);
-    debugPrint('[ClassService.getAll] Buscando em: $url');
+    if (kDebugMode) {
+      debugPrint(
+        '[TeacherMobile][ClassesRequest] filters=${filter?.keys.toList() ?? []}',
+      );
+    }
     try {
       final response =
           await http.get(url, headers: _getHeaders(token)); // Agora é seguro
       final responseBody = utf8.decode(response.bodyBytes);
+      if (kDebugMode) {
+        debugPrint(
+          '[TeacherMobile][ClassesHttp] status=${response.statusCode}',
+        );
+      }
       final responseData = json.decode(responseBody);
 
       if (response.statusCode == 200) {
         List<dynamic> classList = responseData;
         return classList.map((json) => ClassModel.fromJson(json)).toList();
       } else {
-        debugPrint(
-            '[ClassService.getAll] Erro ${response.statusCode}: $responseBody');
+        debugPrint('[ClassService.getAll] Erro ${response.statusCode}');
         throw Exception(responseData['message'] ?? 'Erro ao buscar turmas.');
       }
     } catch (error) {

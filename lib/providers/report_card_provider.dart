@@ -211,6 +211,39 @@ class ReportCardProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> updateTeacherSubjectDevelopmentalAssessment({
+    required String token,
+    required String reportCardId,
+    required String subjectId,
+    required List<DevelopmentalCriterionAssessmentModel> criteria,
+    String generalObservation = '',
+  }) async {
+    _isSaving = true;
+    _errorMessage = null;
+    notifyListeners();
+
+    try {
+      final updated = await service.updateTeacherSubjectDevelopmentalAssessment(
+        token: token,
+        reportCardId: reportCardId,
+        subjectId: subjectId,
+        criteria: criteria,
+        generalObservation: generalObservation,
+      );
+
+      _currentReportCard = updated;
+      _upsertReportCardInCache(updated);
+
+      return true;
+    } catch (e) {
+      _errorMessage = e.toString();
+      return false;
+    } finally {
+      _isSaving = false;
+      notifyListeners();
+    }
+  }
+
   Future<bool> recalculateReportCardStatus({
     required String token,
     required String reportCardId,

@@ -19,6 +19,8 @@ import 'teacher_student_profile_screen.dart';
 
 // Providers vitais para extrair alunos e filtrar turmas pelo horário
 import '../../providers/horario_provider.dart';
+import '../../providers/academic_calendar_provider.dart';
+import '../../util/teacher_class_context_helper.dart';
 
 // =============================================================================
 // PALETA ACADEMY HUB - GESTÃO DE ALUNOS
@@ -93,8 +95,16 @@ class StudentManagementEntryScreen extends StatelessWidget {
             ),
             SizedBox(height: 10.h),
             Expanded(
-              child: Consumer3<ClassProvider, HorarioProvider, AuthProvider>(
-                builder: (context, classProv, horarioProv, authProv, child) {
+              child: Consumer4<ClassProvider, HorarioProvider, AuthProvider,
+                  AcademicCalendarProvider>(
+                builder: (
+                  context,
+                  classProv,
+                  horarioProv,
+                  authProv,
+                  academicProv,
+                  child,
+                ) {
                   if (classProv.isLoading || horarioProv.isLoading) {
                     return const Center(
                         child: CircularProgressIndicator(color: kPrimaryBlue));
@@ -103,21 +113,52 @@ class StudentManagementEntryScreen extends StatelessWidget {
                   final currentUser = authProv.user;
                   if (currentUser == null) return const SizedBox();
 
-                  final teacherIds = <String>{
-                    currentUser.id,
-                    ...currentUser.staffProfiles.map((p) => p.id)
-                  };
+                  final classes = TeacherClassContextHelper.getAvailableClasses(
+                    classes: classProv.classes,
+                    horarios: horarioProv.horarios,
+                    user: currentUser,
+                    terms: academicProv.terms,
+                  );
+                  final currentTerm = TeacherClassContextHelper.getCurrentTerm(
+                    academicProv.terms,
+                  );
+                  final effectiveHorarios =
+                      TeacherClassContextHelper.assignedHorarios(
+                    horarioProv.horarios,
+                    academicProv.terms,
+                    user: currentUser,
+                  );
+                  TeacherClassContextHelper.logClasses(
+                    screen: 'students',
+                    currentTerm: currentTerm,
+                    classes: classes,
+                    horarios: effectiveHorarios,
+                  );
+                  TeacherClassContextHelper.logScreenResult(
+                    screen: 'StudentsTab',
+                    isLoading: false,
+                    totalVisibleClasses: classes.length,
+                    totalVisibleSchedules: effectiveHorarios.length,
+                    emptyStateShown: classes.isEmpty,
+                  );
 
-                  final allowedClassIds = horarioProv.horarios
-                      .where((h) =>
-                          teacherIds.contains(h.teacher.id) ||
-                          teacherIds.contains(h.teacherId))
-                      .map((h) => h.classId)
-                      .toSet();
-
-                  final classes = classProv.classes
-                      .where((c) => allowedClassIds.contains(c.id))
-                      .toList();
+                  final hasDataError = classes.isEmpty &&
+                      (classProv.error != null || horarioProv.error != null);
+                  if (hasDataError) {
+                    return _TeacherStudentsLoadError(
+                      isDark: isDark,
+                      onRetry: () async {
+                        await TeacherClassContextHelper.ensureDataLoaded(
+                          authProvider: authProv,
+                          classProvider: classProv,
+                          horarioProvider: horarioProv,
+                          academicProvider: academicProv,
+                          forceRefresh: true,
+                          screen: 'students_retry',
+                        );
+                      },
+                    );
+                  }
 
                   if (classes.isEmpty) {
                     return Center(
@@ -159,6 +200,64 @@ class StudentManagementEntryScreen extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TeacherStudentsLoadError extends StatelessWidget {
+  final bool isDark;
+  final Future<void> Function() onRetry;
+
+  const _TeacherStudentsLoadError({
+    required this.isDark,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      label: 'Erro ao carregar alunos. Tente novamente.',
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.all(24.w),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                PhosphorIcons.warning_circle,
+                color: kAccentOrange,
+                size: 36,
+              ),
+              SizedBox(height: 14.h),
+              Text(
+                'Não foi possível carregar suas turmas',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.w700,
+                  color: _textPrimary(isDark),
+                ),
+              ),
+              SizedBox(height: 8.h),
+              Text(
+                'Tente novamente para acessar os alunos atribuídos.',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  fontSize: 13.sp,
+                  color: _textSecondary(isDark),
+                ),
+              ),
+              SizedBox(height: 18.h),
+              ElevatedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Tentar novamente'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -279,6 +378,7 @@ class _StudentManagementListScreenState
   List<Enrollment> _allEnrollments = [];
   List<Enrollment> _filteredEnrollments = [];
   bool _isLoading = true;
+  String? _loadError;
 
   @override
   void initState() {
@@ -294,6 +394,12 @@ class _StudentManagementListScreenState
   }
 
   Future<void> _loadStudentsFromApi() async {
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
     final authProv = Provider.of<AuthProvider>(context, listen: false);
     final enrollmentProv =
         Provider.of<EnrollmentProvider>(context, listen: false);
@@ -303,6 +409,15 @@ class _StudentManagementListScreenState
         authProv.token!, widget.classData.id);
 
     if (!mounted) return;
+    if (enrollmentProv.error != null) {
+      setState(() {
+        _allEnrollments = [];
+        _filteredEnrollments = [];
+        _isLoading = false;
+        _loadError = 'Não foi possível carregar os alunos desta turma.';
+      });
+      return;
+    }
 
     // 2. Transforma as matrículas ativas em uma lista de alunos
     final activeEnrollments = enrollmentProv.enrollments.toList();
@@ -399,40 +514,78 @@ class _StudentManagementListScreenState
                     child: CircularProgressIndicator(
                         color:
                             kPrimaryBlue)) // Bolinha de Loading enquanto a API responde
-                : _allEnrollments.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(PhosphorIcons.users,
-                                size: 48.sp, color: _textSecondary(isDark)),
-                            SizedBox(height: 16.h),
-                            Text('Nenhum aluno matriculado nesta turma.',
-                                style: GoogleFonts.inter(
-                                    color: _textSecondary(isDark))),
-                          ],
+                : _loadError != null
+                    ? Semantics(
+                        liveRegion: true,
+                        label: _loadError,
+                        child: Center(
+                          child: Padding(
+                            padding: EdgeInsets.all(24.w),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(
+                                  PhosphorIcons.warning_circle,
+                                  color: kAccentOrange,
+                                  size: 38,
+                                ),
+                                SizedBox(height: 12.h),
+                                Text(
+                                  _loadError!,
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.inter(
+                                    color: _textPrimary(isDark),
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                SizedBox(height: 16.h),
+                                ElevatedButton.icon(
+                                  onPressed: _loadStudentsFromApi,
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Tentar novamente'),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       )
-                    : _filteredEnrollments.isEmpty
+                    : _allEnrollments.isEmpty
                         ? Center(
-                            child: Text('Nenhum aluno encontrado na pesquisa.',
-                                style: GoogleFonts.inter(
-                                    color: _textSecondary(isDark))),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(PhosphorIcons.users,
+                                    size: 48.sp, color: _textSecondary(isDark)),
+                                SizedBox(height: 16.h),
+                                Text('Nenhum aluno matriculado nesta turma.',
+                                    style: GoogleFonts.inter(
+                                        color: _textSecondary(isDark))),
+                              ],
+                            ),
                           )
-                        : ListView.separated(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 20.w, vertical: 10.h),
-                            itemCount: _filteredEnrollments.length,
-                            separatorBuilder: (_, __) => SizedBox(height: 12.h),
-                            itemBuilder: (context, index) {
-                              final enrollment = _filteredEnrollments[index];
-                              return _StudentListItem(
-                                enrollment: enrollment,
-                                classData: widget.classData,
-                                isDark: isDark,
-                              );
-                            },
-                          ),
+                        : _filteredEnrollments.isEmpty
+                            ? Center(
+                                child: Text(
+                                    'Nenhum aluno encontrado na pesquisa.',
+                                    style: GoogleFonts.inter(
+                                        color: _textSecondary(isDark))),
+                              )
+                            : ListView.separated(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 20.w, vertical: 10.h),
+                                itemCount: _filteredEnrollments.length,
+                                separatorBuilder: (_, __) =>
+                                    SizedBox(height: 12.h),
+                                itemBuilder: (context, index) {
+                                  final enrollment =
+                                      _filteredEnrollments[index];
+                                  return _StudentListItem(
+                                    enrollment: enrollment,
+                                    classData: widget.classData,
+                                    isDark: isDark,
+                                  );
+                                },
+                              ),
           ),
         ],
       ),

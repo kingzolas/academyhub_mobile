@@ -10,6 +10,9 @@ import 'package:academyhub_mobile/providers/report_card_provider.dart';
 import 'package:academyhub_mobile/providers/student_provider.dart';
 import 'package:academyhub_mobile/providers/horario_provider.dart'; // NOVO IMPORT
 import 'package:academyhub_mobile/screens/teacher/screen_report_card_detail.dart';
+import 'package:academyhub_mobile/util/early_childhood_criteria_helper.dart';
+import 'package:academyhub_mobile/util/report_card_evaluation_mode_helper.dart';
+import 'package:academyhub_mobile/util/teacher_class_context_helper.dart';
 import 'package:academyhub_mobile/widgets/report_card_operation_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
@@ -96,23 +99,14 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
         return allClasses;
       }
 
-      // --- NOVA LÓGICA DE FILTRO DO PROFESSOR (MOBILE) ---
-      try {
-        final userId = user.id?.toString() ?? '';
-        if (userId.isNotEmpty) {
-          final horariosProvider = context.read<HorarioProvider>();
-          final turmasDoProfessor = horariosProvider.horarios
-              .where((h) => h.teacherId == userId)
-              .map((h) => h.classId)
-              .toSet();
-
-          return allClasses
-              .where((c) => turmasDoProfessor.contains(c.id))
-              .toList();
-        }
-      } catch (_) {}
-
-      return allClasses;
+      final horariosProvider = context.read<HorarioProvider>();
+      final academicProvider = context.read<AcademicCalendarProvider>();
+      return TeacherClassContextHelper.getAvailableClasses(
+        classes: allClasses,
+        horarios: horariosProvider.horarios,
+        user: user,
+        terms: academicProvider.terms,
+      );
     } catch (_) {
       return allClasses;
     }
@@ -156,15 +150,6 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
         }
         if (!mounted) return;
 
-        // --- FETCH HORARIOS ---
-        horarios = context.read<HorarioProvider>();
-        if (horarios.horarios.isEmpty) {
-          try {
-            await horarios.fetchHorarios(auth.token!);
-          } catch (_) {}
-        }
-        if (!mounted) return;
-
         academic = context.read<AcademicCalendarProvider>();
 
         final resolvedYear = _resolveSchoolYear(academic.schoolYears);
@@ -177,6 +162,17 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
             await academic.fetchTermsForSelectedYear();
           }
         }
+        if (!mounted) return;
+
+        horarios = context.read<HorarioProvider>();
+        await TeacherClassContextHelper.ensureDataLoaded(
+          authProvider: auth,
+          classProvider: classesProvider,
+          horarioProvider: horarios,
+          academicProvider: academic,
+          forceRefresh: forceReload || horarios.horarios.isEmpty,
+          screen: 'report_cards',
+        );
       }
 
       if (!mounted) return;
@@ -436,11 +432,22 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
   }) {
     final studentMap = {for (final s in students) s.id: s};
     final classNames = {for (final c in classes) c.id: c.name};
+    final classesById = {for (final c in classes) c.id: c};
     final termNames = {for (final t in terms) t.id: t.titulo};
 
     return cardsList.map((card) {
-      final average = card.averageScore;
       final student = studentMap[card.studentId];
+      final className = classNames[card.classId] ??
+          (_className.isNotEmpty ? _className : 'Turma');
+      final isDevelopmental = ReportCardEvaluationModeHelper.isDevelopmental(
+        reportCard: card,
+        classModel: classesById[card.classId],
+        className: className,
+      );
+      final average = isDevelopmental ? null : card.averageScore;
+      final hasPending = isDevelopmental
+          ? EarlyChildhoodCriteriaHelper.hasPendingCriteria(card)
+          : card.hasPendingSubjects;
 
       return _ReportCardRowData(
         reportCard: card,
@@ -448,17 +455,21 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
             ? card.studentNameSnapshot
             : (student?.fullName ?? 'Aluno não localizado'),
         guardianName: _getGuardianName(card, studentMap),
-        className: classNames[card.classId] ??
-            (_className.isNotEmpty ? _className : 'Turma'),
+        className: className,
         schoolYearLabel: card.schoolYear.toString(),
         termLabel:
             termNames[card.termId] ?? (_term.isNotEmpty ? _term : 'Período'),
-        progress: card.filledSubjectsCount,
+        progress: isDevelopmental
+            ? EarlyChildhoodCriteriaHelper.completedAreasCount(card)
+            : card.filledSubjectsCount,
         totalSubjects: card.totalSubjectsCount,
         average: average,
         status: card.status.isNotEmpty ? card.status : _statusFor(card),
-        needsAttention: card.hasPendingSubjects ||
-            (average != null && average < card.minimumAverage),
+        needsAttention: hasPending ||
+            (!isDevelopmental &&
+                average != null &&
+                average < card.minimumAverage),
+        isDevelopmental: isDevelopmental,
       );
     }).toList();
   }
@@ -869,7 +880,7 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
     final classesProvider = context.watch<ClassProvider>();
     final academic = context.watch<AcademicCalendarProvider>();
     final auth = context.watch<AuthProvider>();
-    final horarios = context.watch<HorarioProvider>(); // NOVO WATCH
+    context.watch<HorarioProvider>();
 
     final availableClasses =
         _getAvailableClasses(context, classesProvider.classes, auth.user);
@@ -910,6 +921,7 @@ class _ScreenReportCardsState extends State<ScreenReportCards> {
             className: _selectedDetail!.className,
             schoolYear: _selectedDetail!.schoolYearLabel,
             termLabel: _selectedDetail!.termLabel,
+            isDevelopmental: _selectedDetail!.isDevelopmental,
             onClose: _closeDetail,
           ),
         ),
@@ -969,6 +981,7 @@ class _ReportCardRowData {
   final double? average;
   final String status;
   final bool needsAttention;
+  final bool isDevelopmental;
 
   const _ReportCardRowData({
     required this.reportCard,
@@ -982,6 +995,7 @@ class _ReportCardRowData {
     required this.average,
     required this.status,
     required this.needsAttention,
+    required this.isDevelopmental,
   });
 }
 
@@ -1465,11 +1479,13 @@ class _StudentReportCard extends StatelessWidget {
     final progress =
         data.totalSubjects == 0 ? 0.0 : data.progress / data.totalSubjects;
 
-    final averageColor = data.average == null
-        ? palette.muted
-        : data.average! >= 7
-            ? palette.accentGreen
-            : palette.accentRed;
+    final averageColor = data.isDevelopmental
+        ? palette.accentBlue
+        : data.average == null
+            ? palette.muted
+            : data.average! >= 7
+                ? palette.accentGreen
+                : palette.accentRed;
 
     final statusColor = _statusColor();
 
@@ -1575,9 +1591,13 @@ class _StudentReportCard extends StatelessWidget {
                 Expanded(
                   child: _InfoBox(
                     palette: palette,
-                    label: 'Média',
-                    value: data.average?.toStringAsFixed(1) ?? '--',
-                    icon: PhosphorIcons.chart_bar,
+                    label: data.isDevelopmental ? 'Modo' : 'Média',
+                    value: data.isDevelopmental
+                        ? 'Desenvolvimento'
+                        : (data.average?.toStringAsFixed(1) ?? '--'),
+                    icon: data.isDevelopmental
+                        ? PhosphorIcons.tree_structure
+                        : PhosphorIcons.chart_bar,
                     valueColor: averageColor,
                   ),
                 ),
@@ -1607,7 +1627,9 @@ class _StudentReportCard extends StatelessWidget {
                       ),
                       const Spacer(),
                       Text(
-                        '${data.progress}/${data.totalSubjects} disciplinas',
+                        data.isDevelopmental
+                            ? '${data.progress}/${data.totalSubjects} áreas avaliadas'
+                            : '${data.progress}/${data.totalSubjects} disciplinas',
                         style: GoogleFonts.inter(
                           fontSize: 12.sp,
                           fontWeight: FontWeight.w600,

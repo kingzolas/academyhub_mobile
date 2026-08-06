@@ -9,6 +9,7 @@ import 'package:academyhub_mobile/providers/class_provider.dart';
 import 'package:academyhub_mobile/services/evento_service.dart';
 import 'package:academyhub_mobile/services/horario_service.dart';
 import 'package:academyhub_mobile/services/term_service.dart'; // Importante para buscar o ano letivo
+import 'package:academyhub_mobile/util/teacher_class_context_helper.dart';
 import 'package:dropdown_button2/dropdown_button2.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_phosphor_icons/flutter_phosphor_icons.dart';
@@ -33,6 +34,7 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
   final TermService _termService = TermService();
 
   bool _isLoading = true;
+  String? _scheduleError;
   List<ClassModel> _allClasses = [];
   ClassModel? _selectedClass;
 
@@ -69,6 +71,7 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
     if (auth.token == null || auth.user == null) return;
 
     try {
+      _scheduleError = null;
       // 1. Identificar o Período Letivo Atual (CRÍTICO PARA CORRIGIR O BUG)
       final terms = await _termService.find(auth.token!, {});
       final now = DateTime.now();
@@ -79,17 +82,28 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
           (now.isAfter(t.startDate) || isSameDay(now, t.startDate)) &&
           (now.isBefore(t.endDate) || isSameDay(now, t.endDate)));
 
-      // Se não achar (ex: férias), pega o último cadastrado para não quebrar a tela
-      if (_currentTerm == null && terms.isNotEmpty) {
-        // Ordena pelo mais recente
-        terms.sort((a, b) => b.startDate.compareTo(a.startDate));
-        _currentTerm = terms.first;
-      }
-
-      // 2. Busca todas as turmas (para o dropdown)
+      // 2. Busca as turmas e restringe o dropdown aos vínculos do professor.
       await classProvider.fetchClasses(auth.token!);
-      _allClasses =
-          classProvider.classes.where((c) => c.status != 'Cancelada').toList();
+      if (classProvider.error != null) {
+        throw Exception(classProvider.error);
+      }
+      final assignmentFilter = <String, String>{};
+      if (!TeacherClassContextHelper.isPrivilegedUser(auth.user)) {
+        assignmentFilter['teacherId'] = auth.user!.id;
+      }
+      final assignmentSchedules = await _horarioService.getHorarios(
+        auth.token!,
+        filter: assignmentFilter,
+        debugScreen: 'schedule_assignments',
+      );
+      _allClasses = TeacherClassContextHelper.getAvailableClasses(
+        classes: classProvider.classes
+            .where((c) => c.status != 'Cancelada')
+            .toList(),
+        horarios: assignmentSchedules,
+        user: auth.user,
+        terms: terms,
+      );
       _allClasses.sort((a, b) => a.name.compareTo(b.name));
 
       // 3. Busca eventos
@@ -98,7 +112,8 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
       // 4. Busca a grade (Agora filtrada pelo Termo correto)
       await _fetchScheduleData();
     } catch (e) {
-      debugPrint("Erro ao carregar dados da grade: $e");
+      debugPrint('[TeacherMobile][ScheduleLoadError] ${e.runtimeType}');
+      _scheduleError = 'Não foi possível carregar a grade.';
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -151,7 +166,12 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
   }
 
   Future<void> _fetchScheduleData() async {
-    setState(() => _isLoading = true);
+    if (mounted) {
+      setState(() {
+        _isLoading = true;
+        _scheduleError = null;
+      });
+    }
     final auth = Provider.of<AuthProvider>(context, listen: false);
 
     // Se não tiver termo definido, não tem como buscar grade correta
@@ -163,7 +183,8 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
     try {
       Map<String, String> filters = {
         // [CORREÇÃO] Filtra pelo ID do Termo Atual para evitar aulas do ano passado
-        'termId': _currentTerm!.id
+        'termId': _currentTerm!.id,
+        'resolveInherited': 'true',
       };
 
       if (_selectedClass == null) {
@@ -174,11 +195,28 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
         filters['classId'] = _selectedClass!.id;
       }
 
-      final schedules =
-          await _horarioService.getHorarios(auth.token!, filter: filters);
-      _updateLocalScheduleData(schedules);
+      final schedules = await _horarioService.getHorarios(
+        auth.token!,
+        filter: filters,
+        debugScreen: 'schedule',
+      );
+      var effectiveSchedules = schedules;
+      if (_currentTerm != null) {
+        effectiveSchedules = TeacherClassContextHelper.logFilteredHorarios(
+          screen: 'schedule',
+          before: schedules,
+          after: TeacherClassContextHelper.effectiveHorarios(
+            schedules,
+            _currentTerm!,
+            user: auth.user,
+          ),
+          currentTerm: _currentTerm!,
+        );
+      }
+      _updateLocalScheduleData(effectiveSchedules);
     } catch (e) {
-      debugPrint("Erro ao buscar grade: $e");
+      debugPrint('[TeacherMobile][ScheduleRequestError] ${e.runtimeType}');
+      _scheduleError = 'Não foi possível carregar a grade.';
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -317,18 +355,59 @@ class _ScreenTeacherScheduleState extends State<ScreenTeacherSchedule> {
             Expanded(
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : _currentTerm == null
-                      ? Center(
-                          child: Text(
-                              "Nenhum período letivo ativo encontrado para hoje.",
-                              style: GoogleFonts.inter(
-                                  fontSize: 16.sp, color: Colors.grey)))
-                      : LayoutBuilder(
-                          builder: (context, constraints) {
-                            return _buildFullWeekGrid(
-                                isDark, constraints.maxWidth);
-                          },
-                        ),
+                  : _scheduleError != null
+                      ? _buildScheduleError(textPrimary)
+                      : _currentTerm == null
+                          ? Center(
+                              child: Text(
+                                  "Nenhum período letivo ativo encontrado para hoje.",
+                                  style: GoogleFonts.inter(
+                                      fontSize: 16.sp, color: Colors.grey)))
+                          : LayoutBuilder(
+                              builder: (context, constraints) {
+                                return _buildFullWeekGrid(
+                                    isDark, constraints.maxWidth);
+                              },
+                            ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScheduleError(Color? textPrimary) {
+    return Semantics(
+      liveRegion: true,
+      label: _scheduleError,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              PhosphorIcons.warning_circle,
+              color: Colors.orange,
+              size: 38,
+            ),
+            SizedBox(height: 12.h),
+            Text(
+              _scheduleError!,
+              style: GoogleFonts.inter(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w700,
+                color: textPrimary,
+              ),
+            ),
+            SizedBox(height: 8.h),
+            Text(
+              'Verifique sua conexão e tente novamente.',
+              style: GoogleFonts.inter(fontSize: 13.sp, color: Colors.grey),
+            ),
+            SizedBox(height: 16.h),
+            ElevatedButton.icon(
+              onPressed: _loadInitialData,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Tentar novamente'),
             ),
           ],
         ),

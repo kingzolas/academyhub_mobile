@@ -109,6 +109,11 @@ class AttendanceService {
   Future<void> saveAttendance(AttendanceSheet sheet) async {
     final token = await _getToken();
     final url = Uri.parse('${ApiConfig.apiUrl}/attendance');
+    debugPrint('[TeacherMobile][AttendanceSave] '
+        'endpoint=$url classId=${sheet.classId} '
+        'date=${sheet.date.toIso8601String()} '
+        'termId=not_sent sourceTermId=not_sent '
+        'rule=classId+date');
 
     debugPrint('💾 [AttendanceService] Salvando chamada...');
 

@@ -1,4 +1,5 @@
 import 'package:academyhub_mobile/model/guardian_auth_model.dart';
+import 'package:academyhub_mobile/screens/guardian_pin_recovery_sheet.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -328,6 +329,30 @@ class _LoginpageState extends State<Loginpage> {
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (modalContext) => const GuardianFirstAccessSheet(),
+    );
+
+    if (!mounted || result == null) return;
+
+    _guardianCpfFormatter.formatEditUpdate(
+      const TextEditingValue(),
+      TextEditingValue(text: result.cpfDigits),
+    );
+    _guardianCpfController.text = _guardianCpfFormatter.getMaskedText();
+    setState(() {
+      _loginMode = _LoginMode.guardian;
+      _guardianPinController.clear();
+    });
+  }
+
+  Future<void> _openGuardianPinRecovery() async {
+    final result = await showModalBottomSheet<GuardianPinRecoveryOutcome>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: !_isLoading,
+      enableDrag: !_isLoading,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (modalContext) => const GuardianPinRecoverySheet(),
     );
 
     if (!mounted || result == null) return;
@@ -696,6 +721,39 @@ class _LoginpageState extends State<Loginpage> {
             ),
           ),
           SizedBox(height: 14.h),
+          TextButton.icon(
+            onPressed: _isLoading ? null : _openGuardianPinRecovery,
+            icon:
+                const Icon(Icons.lock_reset_rounded, color: Color(0xFF7C4D7E)),
+            label: Text(
+              'Esqueci meu PIN',
+              style: GoogleFonts.inter(
+                color: const Color(0xFF7C4D7E),
+                fontSize: 14.sp,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: 2.h),
+            child: Row(
+              children: [
+                const Expanded(child: Divider(color: Color(0xFFE1DCE3))),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10.w),
+                  child: Text(
+                    'ou',
+                    style: GoogleFonts.inter(
+                      color: const Color(0xFF8B8D96),
+                      fontSize: 11.sp,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Expanded(child: Divider(color: Color(0xFFE1DCE3))),
+              ],
+            ),
+          ),
           TextButton.icon(
             onPressed: _isLoading ? null : _openGuardianFirstAccess,
             icon: const Icon(Icons.key_outlined, color: Color(0xFF7C4D7E)),

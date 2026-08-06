@@ -555,6 +555,34 @@ class AuthProvider with ChangeNotifier {
     );
   }
 
+  Future<GuardianPinRecoveryStartResult> startGuardianPinRecovery({
+    required String cpf,
+    required String studentFullName,
+    required String studentBirthDate,
+    required String guardianBirthDate,
+    String? schoolPublicId,
+  }) {
+    return _guardianAuthService.startPinRecovery(
+      cpf: cpf,
+      studentFullName: studentFullName,
+      studentBirthDate: studentBirthDate,
+      guardianBirthDate: guardianBirthDate,
+      schoolPublicId: schoolPublicId,
+    );
+  }
+
+  Future<GuardianPinRecoveryResult> completeGuardianPinRecovery({
+    required String challengeId,
+    required String verificationToken,
+    required String newPin,
+  }) {
+    return _guardianAuthService.completePinRecovery(
+      challengeId: challengeId,
+      verificationToken: verificationToken,
+      newPin: newPin,
+    );
+  }
+
   Future<GuardianLoginResult> loginGuardian({
     String? schoolPublicId,
     required String cpf,

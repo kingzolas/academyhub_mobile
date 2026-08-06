@@ -149,6 +149,91 @@ class GuardianPinSetupResult {
   }
 }
 
+class GuardianPinRecoveryStartResult {
+  final bool schoolSelectionRequired;
+  final String? challengeId;
+  final String? verificationToken;
+  final int expiresInSeconds;
+  final List<GuardianSchoolOption> options;
+
+  const GuardianPinRecoveryStartResult({
+    required this.schoolSelectionRequired,
+    required this.challengeId,
+    required this.verificationToken,
+    required this.expiresInSeconds,
+    this.options = const [],
+  });
+
+  bool get isReadyForPin =>
+      !schoolSelectionRequired &&
+      (challengeId ?? '').isNotEmpty &&
+      (verificationToken ?? '').isNotEmpty;
+
+  factory GuardianPinRecoveryStartResult.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final rawOptions = json['options'] as List<dynamic>? ?? const [];
+
+    return GuardianPinRecoveryStartResult(
+      schoolSelectionRequired: json['schoolSelectionRequired'] == true,
+      challengeId: json['challengeId']?.toString(),
+      verificationToken: json['verificationToken']?.toString(),
+      expiresInSeconds: int.tryParse('${json['expiresInSeconds'] ?? 0}') ?? 0,
+      options: rawOptions
+          .whereType<Map<String, dynamic>>()
+          .map(GuardianSchoolOption.fromJson)
+          .where((option) => option.schoolPublicId.trim().isNotEmpty)
+          .toList(),
+    );
+  }
+}
+
+class GuardianPinRecoveryResult {
+  final String status;
+  final String identifierType;
+  final String identifierMasked;
+  final String message;
+
+  const GuardianPinRecoveryResult({
+    required this.status,
+    required this.identifierType,
+    required this.identifierMasked,
+    required this.message,
+  });
+
+  bool get isSuccess => status == 'pin_updated';
+
+  factory GuardianPinRecoveryResult.fromJson(Map<String, dynamic> json) {
+    return GuardianPinRecoveryResult(
+      status: (json['status'] ?? '').toString(),
+      identifierType: (json['identifierType'] ?? 'cpf').toString(),
+      identifierMasked: (json['identifierMasked'] ?? '').toString(),
+      message: (json['message'] ?? '').toString(),
+    );
+  }
+}
+
+class GuardianPinRecoveryException implements Exception {
+  final String message;
+  final String? code;
+  final int? statusCode;
+
+  const GuardianPinRecoveryException(
+    this.message, {
+    this.code,
+    this.statusCode,
+  });
+
+  bool get isRateLimited =>
+      statusCode == 429 || code == 'pin_recovery_rate_limited';
+
+  bool get isExpired =>
+      statusCode == 410 || code == 'pin_recovery_challenge_expired';
+
+  @override
+  String toString() => message;
+}
+
 class GuardianSession {
   final String token;
   final String identifierType;

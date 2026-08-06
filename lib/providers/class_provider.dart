@@ -4,7 +4,10 @@ import 'package:academyhub_mobile/services/class_service.dart';
 import 'package:flutter/foundation.dart';
 
 class ClassProvider with ChangeNotifier {
-  final ClassService _classService = ClassService();
+  final ClassService _classService;
+
+  ClassProvider({ClassService? classService})
+      : _classService = classService ?? ClassService();
 
   List<ClassModel> _classes = [];
   bool _isLoading = false;
@@ -46,9 +49,15 @@ class ClassProvider with ChangeNotifier {
     } catch (e) {
       _setError(e.toString());
       _classes = [];
+      if (kDebugMode) {
+        debugPrint(
+          '[TeacherMobile][ClassesProviderError] errorType=${e.runtimeType}',
+        );
+      }
     } finally {
-      if (_isInitialLoading)
+      if (_isInitialLoading) {
         _isInitialLoading = false; // Só muda na primeira vez
+      }
       _setLoading(false);
     }
   }

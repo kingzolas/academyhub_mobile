@@ -1,1 +1,6 @@
+# Do not let a future Firebase worker request receive index.html with 200.
+# If Web Messaging is later enabled, the worker must be supplied explicitly.
+/firebase-messaging-sw.js /404.html 404
+
+# Static files take precedence. This rule is only the Flutter SPA fallback.
 /* /index.html 200

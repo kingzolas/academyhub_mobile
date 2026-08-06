@@ -11,8 +11,8 @@ import '../../providers/class_provider.dart';
 import '../../providers/horario_provider.dart';
 import '../../services/attendance_service.dart';
 import '../../providers/academic_calendar_provider.dart';
-import '../../model/term_model.dart';
 import '../../model/horario_model.dart';
+import '../../util/teacher_class_context_helper.dart';
 
 typedef ClassSelectedCallback = dynamic Function(
     String classId, String className);
@@ -60,19 +60,18 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     super.dispose();
   }
 
-  bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
-  TermModel? _getCurrentTerm(List<TermModel> terms) {
-    if (terms.isEmpty) return null;
-    final now = DateTime.now();
-    for (final term in terms) {
-      final inRange =
-          (now.isAfter(term.startDate) || _sameDay(now, term.startDate)) &&
-              (now.isBefore(term.endDate) || _sameDay(now, term.endDate));
-      if (inRange) return term;
+  bool _isGestorUser(dynamic user) {
+    if (user == null) return false;
+    try {
+      final lowerRoles =
+          user.roles.map((role) => role.toString().toLowerCase()).toList();
+      return lowerRoles.contains('admin') ||
+          lowerRoles.contains('diretor') ||
+          lowerRoles.contains('coordenador') ||
+          lowerRoles.contains('administrador');
+    } catch (_) {
+      return false;
     }
-    return terms.first;
   }
 
   Future<void> _loadDataAndCheckAttendance() async {
@@ -98,9 +97,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
 
     Future<void> fetchClassesFuture =
         classProvider.fetchClasses(token, filter: filter);
-    Future<void> fetchHorariosFuture = horarioProvider.horarios.isEmpty
-        ? horarioProvider.fetchHorarios(token)
-        : Future.value();
 
     Future<void> fetchAcademicFuture = Future(() async {
       if (academicProvider.schoolYears.isEmpty) {
@@ -121,19 +117,67 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
       }
     });
 
-    await Future.wait(
-        [fetchClassesFuture, fetchHorariosFuture, fetchAcademicFuture]);
+    await Future.wait([fetchClassesFuture, fetchAcademicFuture]);
 
     if (mounted) {
-      final currentTerm = _getCurrentTerm(academicProvider.terms);
-      final horariosDoBimestre = currentTerm != null
-          ? horarioProvider.horarios
-              .where((h) => h.termId == currentTerm.id)
-              .toList()
-          : horarioProvider.horarios;
+      final currentTerm =
+          TeacherClassContextHelper.getCurrentTerm(academicProvider.terms);
+      TeacherClassContextHelper.logContext(
+        screen: 'attendance',
+        teacherId: user?.id,
+        schoolId: user?.schoolId,
+        currentTerm: currentTerm,
+      );
+      if (currentTerm == null) {
+        setState(() {
+          _attendanceStatusMap = {};
+          _isCheckingAttendance = false;
+        });
+        return;
+      }
 
-      final availableClasses = _getAvailableClasses(
-          context, classProvider.classes, user, horariosDoBimestre);
+      final horarioFilter = <String, String>{
+        'termId': currentTerm.id,
+        'resolveInherited': 'true',
+      };
+      final userId = user?.id ?? '';
+      if (!_isGestorUser(user) && userId.isNotEmpty) {
+        horarioFilter['teacherId'] = userId;
+      }
+      await horarioProvider.fetchHorarios(
+        token,
+        filter: horarioFilter,
+        debugScreen: 'attendance',
+      );
+
+      final horariosDoBimestre = TeacherClassContextHelper.logFilteredHorarios(
+        screen: 'attendance',
+        before: horarioProvider.horarios,
+        after: TeacherClassContextHelper.effectiveHorarios(
+          horarioProvider.horarios,
+          currentTerm,
+          user: user,
+        ),
+        currentTerm: currentTerm,
+      );
+
+      final availableClasses = TeacherClassContextHelper.getAvailableClasses(
+        classes: classProvider.classes,
+        horarios: horariosDoBimestre,
+        user: user,
+        terms: academicProvider.terms,
+      );
+      TeacherClassContextHelper.logAttendanceClasses(
+        currentTerm: currentTerm,
+        classes: availableClasses,
+        horarios: horariosDoBimestre,
+      );
+      TeacherClassContextHelper.logClasses(
+        screen: 'attendance',
+        currentTerm: currentTerm,
+        classes: availableClasses,
+        horarios: horariosDoBimestre,
+      );
       await _checkAttendanceForToday(
           availableClasses, horariosDoBimestre, user?.id ?? '');
     }
@@ -149,14 +193,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final user = authProvider.user;
 
-    bool isGestor = false;
-    if (user != null) {
-      final lowerRoles = user.roles.map((r) => r.toLowerCase()).toList();
-      isGestor = lowerRoles.contains('admin') ||
-          lowerRoles.contains('diretor') ||
-          lowerRoles.contains('coordenador') ||
-          lowerRoles.contains('administrador');
-    }
+    final isGestor = _isGestorUser(user);
 
     for (var turma in classes) {
       final temAulaHoje = horariosDoBimestre.any((h) =>
@@ -167,11 +204,10 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
       if (temAulaHoje) {
         try {
           final sheet =
-              await _attendanceService.getAttendanceSheet(turma.id!, today);
-          _attendanceStatusMap[turma.id!] =
-              sheet.id != null && sheet.id!.isNotEmpty;
+              await _attendanceService.getAttendanceSheet(turma.id, today);
+          _attendanceStatusMap[turma.id] = sheet.id?.isNotEmpty ?? false;
         } catch (_) {
-          _attendanceStatusMap[turma.id!] = false;
+          _attendanceStatusMap[turma.id] = false;
         }
       }
     }
@@ -183,7 +219,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
 
   Future<void> _openAttendanceHistory(ClassModel turma) async {
     final classId = turma.id;
-    if (classId == null || classId.isEmpty) return;
+    if (classId.isEmpty) return;
 
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -193,46 +229,6 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
         ),
       ),
     );
-  }
-
-  List<ClassModel> _getAvailableClasses(
-    BuildContext context,
-    List<ClassModel> allClasses,
-    dynamic user,
-    List<HorarioModel> horariosDoBimestre,
-  ) {
-    if (user == null) return [];
-
-    bool isGestor = false;
-    try {
-      final roles = (user.roles as List<dynamic>)
-          .map((e) => e.toString().toLowerCase())
-          .toList();
-      isGestor = roles.contains('admin') ||
-          roles.contains('diretor') ||
-          roles.contains('coordenador') ||
-          roles.contains('administrador');
-    } catch (_) {}
-
-    if (isGestor) {
-      return allClasses;
-    }
-
-    try {
-      final userId = user.id?.toString() ?? '';
-      if (userId.isNotEmpty) {
-        final turmasDoProfessor = horariosDoBimestre
-            .where((h) => h.teacherId == userId)
-            .map((h) => h.classId)
-            .toSet();
-
-        return allClasses
-            .where((c) => turmasDoProfessor.contains(c.id))
-            .toList();
-      }
-    } catch (_) {}
-
-    return allClasses;
   }
 
   @override
@@ -245,24 +241,25 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     final user = authProvider.user;
     final String userId = user?.id ?? '';
 
-    bool isGestor = false;
-    if (user != null) {
-      final lowerRoles = user.roles.map((r) => r.toLowerCase()).toList();
-      isGestor = lowerRoles.contains('admin') ||
-          lowerRoles.contains('diretor') ||
-          lowerRoles.contains('coordenador') ||
-          lowerRoles.contains('administrador');
-    }
+    final isGestor = _isGestorUser(user);
 
-    final currentTerm = _getCurrentTerm(academicProvider.terms);
+    final currentTerm =
+        TeacherClassContextHelper.getCurrentTerm(academicProvider.terms);
     final horariosDoBimestre = currentTerm != null
-        ? horarioProvider.horarios
-            .where((h) => h.termId == currentTerm.id)
-            .toList()
-        : horarioProvider.horarios;
+        ? TeacherClassContextHelper.effectiveHorarios(
+            horarioProvider.horarios,
+            currentTerm,
+            user: user,
+          )
+        : <HorarioModel>[];
 
-    List<ClassModel> availableClasses = _getAvailableClasses(
-        context, classProvider.classes, user, horariosDoBimestre);
+    List<ClassModel> availableClasses =
+        TeacherClassContextHelper.getAvailableClasses(
+      classes: classProvider.classes,
+      horarios: horariosDoBimestre,
+      user: user,
+      terms: academicProvider.terms,
+    );
 
     if (_searchQuery.isNotEmpty) {
       availableClasses = availableClasses
@@ -298,6 +295,14 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     final isLoading = classProvider.isLoading ||
         horarioProvider.isLoading ||
         _isCheckingAttendance;
+    TeacherClassContextHelper.logScreenResult(
+      screen: 'AttendanceClassSelection',
+      isLoading: isLoading,
+      totalVisibleClasses: availableClasses.length,
+      totalVisibleSchedules: horariosDoBimestre.length,
+      emptyStateShown:
+          !isLoading && (currentTerm == null || availableClasses.isEmpty),
+    );
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
@@ -380,36 +385,48 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
                     ),
                   ),
                   Expanded(
-                    child: availableClasses.isEmpty
+                    child: currentTerm == null
                         ? Center(
-                            child: Text(
-                              "Nenhuma turma encontrada no bimestre.",
-                              style: GoogleFonts.inter(color: Colors.grey),
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 24.w),
+                              child: Text(
+                                "Nenhum período letivo ativo configurado para hoje. Verifique o calendário acadêmico.",
+                                textAlign: TextAlign.center,
+                                style: GoogleFonts.inter(color: Colors.grey),
+                              ),
                             ),
                           )
-                        : RefreshIndicator(
-                            onRefresh: _loadDataAndCheckAttendance,
-                            color: const Color(0xFF2DBE60),
-                            child: ListView.builder(
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              padding: EdgeInsets.only(
-                                  left: 16.w,
-                                  right: 16.w,
-                                  top: 16.h,
-                                  bottom: 120.h),
-                              itemCount: availableClasses.length,
-                              itemBuilder: (context, index) {
-                                return _buildClassCard(
-                                    context,
-                                    availableClasses[index],
-                                    horariosDoBimestre,
-                                    currentWeekday,
-                                    isDark,
-                                    isGestor,
-                                    userId);
-                              },
-                            ),
-                          ),
+                        : availableClasses.isEmpty
+                            ? Center(
+                                child: Text(
+                                  "Nenhuma turma encontrada no bimestre.",
+                                  style: GoogleFonts.inter(color: Colors.grey),
+                                ),
+                              )
+                            : RefreshIndicator(
+                                onRefresh: _loadDataAndCheckAttendance,
+                                color: const Color(0xFF2DBE60),
+                                child: ListView.builder(
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  padding: EdgeInsets.only(
+                                      left: 16.w,
+                                      right: 16.w,
+                                      top: 16.h,
+                                      bottom: 120.h),
+                                  itemCount: availableClasses.length,
+                                  itemBuilder: (context, index) {
+                                    return _buildClassCard(
+                                        context,
+                                        availableClasses[index],
+                                        horariosDoBimestre,
+                                        currentWeekday,
+                                        isDark,
+                                        isGestor,
+                                        userId);
+                                  },
+                                ),
+                              ),
                   ),
                 ],
               ),
@@ -538,7 +555,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
             if (confirm != true) return;
           }
 
-          final dynamic result = widget.onClassSelected(turma.id!, turma.name);
+          final dynamic result = widget.onClassSelected(turma.id, turma.name);
           if (result is Future) {
             await result;
           }
@@ -585,7 +602,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
                             size: 14.sp, color: Colors.grey),
                         SizedBox(width: 4.w),
                         Text(
-                          "${turma.studentCount ?? 0} Alunos",
+                          "${turma.studentCount} Alunos",
                           style: GoogleFonts.inter(
                               color: Colors.grey,
                               fontSize: 12.sp,
@@ -638,9 +655,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
                   ),
                   SizedBox(height: 8.h),
                   TextButton.icon(
-                    onPressed: turma.id == null
-                        ? null
-                        : () => _openAttendanceHistory(turma),
+                    onPressed: () => _openAttendanceHistory(turma),
                     style: TextButton.styleFrom(
                       foregroundColor: const Color(0xFF1F5C9F),
                       backgroundColor:

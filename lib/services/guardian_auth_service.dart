@@ -156,6 +156,80 @@ class GuardianAuthService {
     return GuardianPinSetupResult.fromJson(response);
   }
 
+  Future<Map<String, dynamic>> _postPinRecovery(
+    String path, {
+    required Map<String, dynamic> payload,
+  }) async {
+    try {
+      final response = await http.post(
+        _buildUri(path),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(payload),
+      );
+      final responseData =
+          jsonDecode(response.body.isEmpty ? '{}' : response.body)
+              as Map<String, dynamic>;
+
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return responseData;
+      }
+
+      throw GuardianPinRecoveryException(
+        (responseData['message'] ??
+                'Não foi possível concluir a recuperação do PIN.')
+            .toString(),
+        code: responseData['code']?.toString(),
+        statusCode: response.statusCode,
+      );
+    } on GuardianPinRecoveryException {
+      rethrow;
+    } on Exception {
+      throw const GuardianPinRecoveryException(
+        'Não foi possível conectar ao servidor.',
+      );
+    }
+  }
+
+  Future<GuardianPinRecoveryStartResult> startPinRecovery({
+    required String cpf,
+    required String studentFullName,
+    required String studentBirthDate,
+    required String guardianBirthDate,
+    String? schoolPublicId,
+  }) async {
+    final payload = <String, dynamic>{
+      'cpf': cpf,
+      'studentFullName': studentFullName,
+      'studentBirthDate': studentBirthDate,
+      'guardianBirthDate': guardianBirthDate,
+    };
+    if ((schoolPublicId ?? '').trim().isNotEmpty) {
+      payload['schoolPublicId'] = schoolPublicId!.trim();
+    }
+
+    final response = await _postPinRecovery(
+      '/guardian-auth/pin-recovery/start',
+      payload: payload,
+    );
+    return GuardianPinRecoveryStartResult.fromJson(response);
+  }
+
+  Future<GuardianPinRecoveryResult> completePinRecovery({
+    required String challengeId,
+    required String verificationToken,
+    required String newPin,
+  }) async {
+    final response = await _postPinRecovery(
+      '/guardian-auth/pin-recovery/complete',
+      payload: {
+        'challengeId': challengeId,
+        'verificationToken': verificationToken,
+        'newPin': newPin,
+      },
+    );
+    return GuardianPinRecoveryResult.fromJson(response);
+  }
+
   Future<GuardianLoginResult> loginGuardian({
     String? schoolPublicId,
     required String cpf,

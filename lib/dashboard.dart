@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/screens/guardian_home_placeholder_screen.dart';
 import 'package:academyhub_mobile/providers/invoice_provider.dart';
+import 'package:academyhub_mobile/providers/report_card_provider.dart';
 import 'package:academyhub_mobile/services/websocket.dart';
 
 // Views
@@ -53,6 +54,8 @@ class _DashboardState extends State<Dashboard> {
     if (!mounted) return;
     final invoiceProvider =
         Provider.of<InvoiceProvider>(context, listen: false);
+    final reportCardProvider =
+        Provider.of<ReportCardProvider>(context, listen: false);
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
     _socketSubscription?.cancel();
@@ -65,6 +68,16 @@ class _DashboardState extends State<Dashboard> {
             message['type'] == 'invoice:created') {
           if (message['payload'] != null) {
             invoiceProvider.handleInvoiceCreated(message['payload']);
+          }
+        }
+
+        if (message['type'] == 'REPORT_CARD_EXAM_IMPORTED' ||
+            message['type'] == 'REPORT_CARD_UPDATED' ||
+            message['type'] == 'exam:sheet-corrected') {
+          reportCardProvider.clearCurrentReportCard();
+          if (message['type'] == 'REPORT_CARD_EXAM_IMPORTED' ||
+              message['type'] == 'REPORT_CARD_UPDATED') {
+            reportCardProvider.clearClassReportCards();
           }
         }
       } catch (e) {

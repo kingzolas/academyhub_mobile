@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/model/exam_model.dart';
+import 'package:academyhub_mobile/model/report_card_exam_import_model.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 
@@ -11,6 +11,11 @@ const bool kOmrPerformanceDebug =
 void _logOmrPerformance(String event, Map<String, Object?> data) {
   if (!kOmrPerformanceDebug) return;
   debugPrint('[OMR PERF MOBILE API] $event ${jsonEncode(data)}');
+}
+
+void _logExamPerfMobile(String tag, Map<String, Object?> data) {
+  if (!kDebugMode) return;
+  debugPrint('[ExamPerfMobile][$tag] ${jsonEncode(data)}');
 }
 
 class ExamApiService {
@@ -242,6 +247,58 @@ class ExamApiService {
     } else {
       throw Exception('Falha ao carregar lista de alunos.');
     }
+  }
+
+  Future<ExamResultsMobileData> getExamResults({
+    required String examId,
+    required String token,
+    int? requestId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/$examId/results').replace(
+      queryParameters: {
+        if (requestId != null) 'requestId': requestId.toString(),
+        if (kDebugMode) 'perf': 'true',
+      },
+    );
+    final stopwatch = Stopwatch()..start();
+    final response = await http.get(
+      uri,
+      headers: _headers(token),
+    );
+    stopwatch.stop();
+    _logExamPerfMobile('ExamResultHttpEnd', {
+      'endpoint': 'results',
+      'examId': examId,
+      'url': uri.toString(),
+      'status': response.statusCode,
+      'durationMs': stopwatch.elapsedMilliseconds,
+      'responseBytes': response.bodyBytes.length,
+    });
+
+    if (response.statusCode == 200) {
+      final parseStopwatch = Stopwatch()..start();
+      final result = ExamResultsMobileData.fromJson(
+        Map<String, dynamic>.from(jsonDecode(response.body) as Map),
+      );
+      parseStopwatch.stop();
+      _logExamPerfMobile('ExamResultParseEnd', {
+        'endpoint': 'results',
+        'examId': examId,
+        'students': result.students.length,
+        'durationMs': parseStopwatch.elapsedMilliseconds,
+      });
+      return result;
+    }
+
+    Map<String, dynamic>? body;
+    try {
+      body = Map<String, dynamic>.from(jsonDecode(response.body) as Map);
+    } catch (_) {
+      body = null;
+    }
+    throw Exception(
+      body?['message']?.toString() ?? 'Falha ao carregar resultados da prova.',
+    );
   }
 
   // 3. Gerar o Lote de PDF

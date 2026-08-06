@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:academyhub_mobile/attendance/attendance_swipe_screen.dart';
 import 'package:academyhub_mobile/attendance/class_selection_screen.dart';
 import 'package:academyhub_mobile/model/class_model.dart';
@@ -6,7 +8,7 @@ import 'package:academyhub_mobile/providers/academic_calendar_provider.dart';
 import 'package:academyhub_mobile/providers/auth_provider.dart';
 import 'package:academyhub_mobile/providers/horario_provider.dart';
 import 'package:academyhub_mobile/screens/settings/shared_settings_view.dart';
-import 'package:academyhub_mobile/screens/teacher/exam_scanner_screen.dart';
+import 'package:academyhub_mobile/screens/teacher/teacher_exams_mobile_screen.dart';
 import 'package:academyhub_mobile/screens/teacher/teacher_activity_class_selection_screen.dart';
 import 'package:academyhub_mobile/screens/teacher/screen_report_cards.dart';
 import 'package:academyhub_mobile/screens/teacher/screen_teacher_dashboard.dart';
@@ -14,6 +16,7 @@ import 'package:academyhub_mobile/screens/teacher/teacher_class_activities_scree
 import 'package:academyhub_mobile/util/teacher_class_context_helper.dart';
 import 'package:academyhub_mobile/widgets/custom_bottom_menu.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -56,6 +59,25 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
       statusBarColor: Colors.transparent,
       statusBarIconBrightness: Brightness.dark,
     ));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _primeTeacherEffectiveContext();
+    });
+  }
+
+  Future<void> _primeTeacherEffectiveContext() async {
+    final authProvider = context.read<AuthProvider>();
+    final classProvider = context.read<ClassProvider>();
+    final horarioProvider = context.read<HorarioProvider>();
+    final academicProvider = context.read<AcademicCalendarProvider>();
+
+    await TeacherClassContextHelper.ensureDataLoaded(
+      authProvider: authProvider,
+      classProvider: classProvider,
+      horarioProvider: horarioProvider,
+      academicProvider: academicProvider,
+      forceRefresh: true,
+      screen: 'professor_bootstrap',
+    );
   }
 
   void _onTabTapped(int index) {
@@ -140,10 +162,19 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
     setState(() => _currentIndex = _classesIndex);
   }
 
-  void _navigateToScanner() {
+  void _navigateToExams() {
+    final startedAt = DateTime.now();
+    if (kDebugMode) {
+      debugPrint('[ExamPerfMobile][NavigateToExamsStart] ${jsonEncode({
+            'timestamp': startedAt.toIso8601String(),
+            'fromScreen': 'ProfessorMainScreen',
+          })}');
+    }
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (context) => const ExamScannerScreen(),
+        builder: (context) => TeacherExamsMobileScreen(
+          navigateStartedAt: startedAt,
+        ),
       ),
     );
   }
@@ -235,7 +266,7 @@ class _ProfessorMainScreenState extends State<ProfessorMainScreen> {
               },
               onNavigateToStaff: _navigateToMyDataScreen,
               onNavigateToReportCards: _navigateToReportCards,
-              onNavigateToScanner: _navigateToScanner,
+              onNavigateToScanner: _navigateToExams,
             ),
           ),
         ],

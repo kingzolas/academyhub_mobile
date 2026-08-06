@@ -3,7 +3,10 @@ import 'package:academyhub_mobile/services/horario_service.dart';
 import 'package:flutter/foundation.dart';
 
 class HorarioProvider with ChangeNotifier {
-  final HorarioService _horarioService = HorarioService();
+  final HorarioService _horarioService;
+
+  HorarioProvider({HorarioService? horarioService})
+      : _horarioService = horarioService ?? HorarioService();
 
   List<HorarioModel> _horarios = [];
   bool _isLoading = false;
@@ -45,17 +48,28 @@ class HorarioProvider with ChangeNotifier {
 
   // --- MÉTODOS DE API ---
 
-  Future<void> fetchHorarios(String token) async {
+  Future<void> fetchHorarios(String token,
+      {Map<String, String>? filter, String debugScreen = 'unknown'}) async {
     if (_horarios.isEmpty) _isInitialLoading = true;
     _setLoading(true);
     _setError(null);
 
     try {
-      _horarios = await _horarioService.getHorarios(token);
+      _horarios = await _horarioService.getHorarios(
+        token,
+        filter: filter,
+        debugScreen: debugScreen,
+      );
       notifyListeners();
     } catch (e) {
       _setError(e.toString());
       _horarios = [];
+      if (kDebugMode) {
+        debugPrint(
+          '[TeacherMobile][HorariosProviderError] screen=$debugScreen '
+          'errorType=${e.runtimeType}',
+        );
+      }
     } finally {
       if (_isInitialLoading) _isInitialLoading = false;
       _setLoading(false);

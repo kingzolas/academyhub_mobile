@@ -65,6 +65,8 @@ class _TeacherActivityClassSelectionScreenState
         classProvider: context.read<ClassProvider>(),
         horarioProvider: context.read<HorarioProvider>(),
         academicProvider: context.read<AcademicCalendarProvider>(),
+        forceRefresh: refresh,
+        screen: 'classes',
       );
     } finally {
       if (mounted) {
@@ -83,6 +85,14 @@ class _TeacherActivityClassSelectionScreenState
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final user = authProvider.user;
 
+    final currentTerm =
+        TeacherClassContextHelper.getCurrentTerm(academicProvider.terms);
+    final effectiveHorarios = TeacherClassContextHelper.assignedHorarios(
+      horarioProvider.horarios,
+      academicProvider.terms,
+      user: user,
+    );
+
     final availableClasses = TeacherClassContextHelper.sortClassesForActivities(
       classes: classProvider.classes,
       horarios: horarioProvider.horarios,
@@ -95,15 +105,34 @@ class _TeacherActivityClassSelectionScreenState
       user: user,
       terms: academicProvider.terms,
     );
+    TeacherClassContextHelper.logClasses(
+      screen: 'classes',
+      currentTerm: currentTerm,
+      classes: availableClasses,
+      horarios: effectiveHorarios,
+    );
 
     var filteredClasses = availableClasses;
     if (_searchQuery.isNotEmpty) {
       filteredClasses = availableClasses.where((classData) {
         final haystack =
-            '${classData.name} ${classData.grade} ${classData.shift}'.toLowerCase();
+            '${classData.name} ${classData.grade} ${classData.shift}'
+                .toLowerCase();
         return haystack.contains(_searchQuery);
       }).toList();
     }
+    final isLoading = _isPreparing ||
+        (classProvider.isLoading && classProvider.classes.isEmpty) ||
+        (horarioProvider.isLoading && horarioProvider.horarios.isEmpty);
+    final hasDataError = availableClasses.isEmpty &&
+        (classProvider.error != null || horarioProvider.error != null);
+    TeacherClassContextHelper.logScreenResult(
+      screen: 'ClassesTab',
+      isLoading: isLoading,
+      totalVisibleClasses: filteredClasses.length,
+      totalVisibleSchedules: effectiveHorarios.length,
+      emptyStateShown: !isLoading && filteredClasses.isEmpty,
+    );
 
     return SafeArea(
       child: RefreshIndicator(
@@ -146,12 +175,15 @@ class _TeacherActivityClassSelectionScreenState
               ),
             ],
             SizedBox(height: 22.h),
-            if (_isPreparing ||
-                (classProvider.isLoading && classProvider.classes.isEmpty) ||
-                (horarioProvider.isLoading && horarioProvider.horarios.isEmpty))
+            if (isLoading)
               Padding(
                 padding: EdgeInsets.only(top: 80.h),
                 child: const Center(child: CircularProgressIndicator()),
+              )
+            else if (hasDataError)
+              _ClassesErrorState(
+                isDark: isDark,
+                onRetry: () => _ensureDataLoaded(refresh: true),
               )
             else if (filteredClasses.isEmpty)
               _EmptyClassesState(
@@ -189,6 +221,68 @@ class _TeacherActivityClassSelectionScreenState
                   );
                 },
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ClassesErrorState extends StatelessWidget {
+  final bool isDark;
+  final VoidCallback onRetry;
+
+  const _ClassesErrorState({
+    required this.isDark,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      label: 'Erro ao carregar turmas. Tente novamente.',
+      child: Container(
+        padding: EdgeInsets.all(24.w),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF171B20) : Colors.white,
+          borderRadius: BorderRadius.circular(22.r),
+          border: Border.all(
+            color: isDark ? const Color(0xFF2A313B) : const Color(0xFFE7EBF2),
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              PhosphorIcons.warning_circle,
+              color: Colors.orange,
+              size: 32.sp,
+            ),
+            SizedBox(height: 14.h),
+            Text(
+              'Não foi possível carregar suas turmas',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.w700,
+                color: isDark ? Colors.white : const Color(0xFF1A2230),
+              ),
+            ),
+            SizedBox(height: 8.h),
+            Text(
+              'Verifique sua conexão e tente novamente.',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.inter(
+                fontSize: 13.sp,
+                color: isDark ? Colors.grey[400] : const Color(0xFF64748B),
+              ),
+            ),
+            SizedBox(height: 18.h),
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Tentar novamente'),
+            ),
           ],
         ),
       ),
@@ -322,9 +416,7 @@ class _SuggestedClassBanner extends StatelessWidget {
                 ),
                 SizedBox(height: 4.h),
                 Text(
-                  subjectName.isEmpty
-                      ? timing
-                      : '$subjectName • $timing',
+                  subjectName.isEmpty ? timing : '$subjectName • $timing',
                   style: GoogleFonts.inter(
                     fontSize: 12.5.sp,
                     color: Colors.white.withOpacity(0.84),
@@ -390,16 +482,16 @@ class _EmptyClassesState extends StatelessWidget {
               shape: BoxShape.circle,
             ),
             child: Icon(
-              hasSearch ? PhosphorIcons.magnifying_glass : PhosphorIcons.notepad,
+              hasSearch
+                  ? PhosphorIcons.magnifying_glass
+                  : PhosphorIcons.notepad,
               color: hasSearch ? Colors.orange : const Color(0xFF1769FF),
               size: 28.sp,
             ),
           ),
           SizedBox(height: 16.h),
           Text(
-            hasSearch
-                ? 'Nenhuma turma encontrada'
-                : 'Nenhuma turma disponivel',
+            hasSearch ? 'Nenhuma turma encontrada' : 'Nenhuma turma disponivel',
             style: GoogleFonts.inter(
               fontSize: 16.sp,
               fontWeight: FontWeight.w700,
