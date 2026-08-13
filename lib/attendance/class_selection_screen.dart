@@ -13,6 +13,7 @@ import '../../services/attendance_service.dart';
 import '../../providers/academic_calendar_provider.dart';
 import '../../model/horario_model.dart';
 import '../../util/teacher_class_context_helper.dart';
+import '../../services/offline_attendance_store.dart';
 
 typedef ClassSelectedCallback = dynamic Function(
     String classId, String className);
@@ -39,6 +40,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
 
   Map<String, bool> _attendanceStatusMap = {};
   bool _isCheckingAttendance = false;
+  List<ClassModel> _cachedAvailableClasses = [];
 
   @override
   void initState() {
@@ -84,6 +86,11 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
 
     final token = authProvider.token;
     final user = authProvider.user;
+
+    final cachedClasses = await OfflineAttendanceStore.instance.loadClasses();
+    if (mounted && cachedClasses.isNotEmpty) {
+      setState(() => _cachedAvailableClasses = cachedClasses);
+    }
 
     if (token == null) {
       debugPrint("Erro: Token não encontrado ao tentar buscar turmas.");
@@ -167,6 +174,10 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
         user: user,
         terms: academicProvider.terms,
       );
+      if (availableClasses.isNotEmpty) {
+        await OfflineAttendanceStore.instance.saveClasses(availableClasses);
+        if (mounted) setState(() => _cachedAvailableClasses = availableClasses);
+      }
       TeacherClassContextHelper.logAttendanceClasses(
         currentTerm: currentTerm,
         classes: availableClasses,
@@ -201,12 +212,14 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
           h.dayOfWeek == weekday &&
           (isGestor || h.teacherId == userId));
 
-      if (temAulaHoje) {
-        try {
-          final sheet =
-              await _attendanceService.getAttendanceSheet(turma.id, today);
+      try {
+        final sheet =
+            await _attendanceService.getAttendanceSheet(turma.id, today);
+        if (temAulaHoje) {
           _attendanceStatusMap[turma.id] = sheet.id?.isNotEmpty ?? false;
-        } catch (_) {
+        }
+      } catch (_) {
+        if (temAulaHoje) {
           _attendanceStatusMap[turma.id] = false;
         }
       }
@@ -260,6 +273,11 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
       user: user,
       terms: academicProvider.terms,
     );
+    if (availableClasses.isEmpty && _cachedAvailableClasses.isNotEmpty) {
+      availableClasses = _cachedAvailableClasses;
+    }
+    final usingOfflineCache =
+        currentTerm == null && availableClasses.isNotEmpty;
 
     if (_searchQuery.isNotEmpty) {
       availableClasses = availableClasses
@@ -385,7 +403,7 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
                     ),
                   ),
                   Expanded(
-                    child: currentTerm == null
+                    child: currentTerm == null && !usingOfflineCache
                         ? Center(
                             child: Padding(
                               padding: EdgeInsets.symmetric(horizontal: 24.w),
@@ -423,7 +441,8 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
                                         currentWeekday,
                                         isDark,
                                         isGestor,
-                                        userId);
+                                        userId,
+                                        usingOfflineCache);
                                   },
                                 ),
                               ),
@@ -441,7 +460,8 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
       int currentWeekday,
       bool isDark,
       bool isGestor,
-      String userId) {
+      String userId,
+      bool usingOfflineCache) {
     final aulasHoje = horariosDoBimestre
         .where((h) =>
             h.classId == turma.id &&
@@ -453,7 +473,9 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
 
     final temAulaHoje = aulasHoje.isNotEmpty;
 
-    String infoAula = "Sem aulas suas hoje";
+    String infoAula = usingOfflineCache
+        ? "Dados salvos neste dispositivo"
+        : "Sem aulas suas hoje";
     if (temAulaHoje) {
       final materias = aulasHoje.map((h) => h.subject.name).toSet().join(", ");
       final horarioInicio = aulasHoje.first.startTime;
@@ -469,7 +491,13 @@ class _ClassSelectionScreenState extends State<ClassSelectionScreen> {
     String statusText;
     IconData statusIcon;
 
-    if (!temAulaHoje) {
+    if (usingOfflineCache) {
+      statusText = "Disponível offline";
+      statusColor = const Color(0xFF546E7A);
+      statusBgColor =
+          isDark ? const Color(0xFF263238) : const Color(0xFFECEFF1);
+      statusIcon = PhosphorIcons.cloud_slash;
+    } else if (!temAulaHoje) {
       statusText = "Sem aula hoje";
       statusColor = Colors.grey;
       statusBgColor = isDark ? Colors.grey[800]! : Colors.grey[200]!;

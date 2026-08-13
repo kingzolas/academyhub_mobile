@@ -2,6 +2,7 @@
 import 'package:academyhub_mobile/model/class_model.dart';
 import 'package:academyhub_mobile/services/class_service.dart';
 import 'package:flutter/foundation.dart';
+import '../services/offline_attendance_store.dart';
 
 class ClassProvider with ChangeNotifier {
   final ClassService _classService;
@@ -46,9 +47,11 @@ class ClassProvider with ChangeNotifier {
     _setError(null);
     try {
       _classes = await _classService.getAllClasses(token, filter: filter);
+      await OfflineAttendanceStore.instance.saveClasses(_classes);
     } catch (e) {
       _setError(e.toString());
-      _classes = [];
+      final cached = await OfflineAttendanceStore.instance.loadClasses();
+      if (cached.isNotEmpty) _classes = cached;
       if (kDebugMode) {
         debugPrint(
           '[TeacherMobile][ClassesProviderError] errorType=${e.runtimeType}',

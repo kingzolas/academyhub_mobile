@@ -1,68 +1,70 @@
-// lib/services/api_client.dart
 import 'dart:convert';
-import 'package:academyhub_mobile/main.dart' as NavigationService;
-import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:provider/provider.dart';
-
-// import 'navigation_service.dart';
-import '../providers/auth_provider.dart';
+import '../services/auth_session_manager.dart';
 
 class ApiClient {
-  // O PULO DO GATO: O validador central!
-  static void _checkUnauthorized(http.Response response) {
-    if (response.statusCode == 401) {
-      debugPrint(
-          '🚨 [ApiClient] Erro 401 interceptado! Token inválido ou expirado.');
-
-      final context = NavigationService.navigatorKey.currentContext;
-      if (context != null) {
-        // Dispara o logout global que fizemos no AuthProvider
-        Provider.of<AuthProvider>(context, listen: false).logout();
+  static Future<http.Response> _send(
+    Future<http.Response> Function(Map<String, String> headers) request,
+    Map<String, String>? originalHeaders,
+  ) async {
+    final headers = Map<String, String>.from(originalHeaders ?? const {});
+    final session = AuthSessionManager.instance;
+    if (headers.containsKey('Authorization') && session.accessToken != null) {
+      headers['Authorization'] = 'Bearer ${session.accessToken}';
+    }
+    if (session.shouldRefreshSoon && await session.hasRefreshToken()) {
+      try {
+        final token = await session.refresh();
+        headers['Authorization'] = 'Bearer $token';
+      } on SessionRefreshException catch (error) {
+        if (error.sessionInvalid) rethrow;
       }
+    }
 
-      throw Exception('Sua sessão expirou. Faça login novamente.');
+    var response = await request(headers);
+    if (response.statusCode != 401 || !headers.containsKey('Authorization')) {
+      return response;
+    }
+
+    try {
+      final token = await session.refresh(force: true);
+      headers['Authorization'] = 'Bearer $token';
+      response = await request(headers);
+      return response;
+    } on SessionRefreshException catch (error) {
+      if (error.sessionInvalid) rethrow;
+      return response;
     }
   }
 
-  // --- Wrappers para os métodos HTTP ---
-
-  static Future<http.Response> get(Uri url,
-      {Map<String, String>? headers}) async {
-    final response = await http.get(url, headers: headers);
-    _checkUnauthorized(response);
-    return response;
-  }
+  static Future<http.Response> get(Uri url, {Map<String, String>? headers}) =>
+      _send((resolved) => http.get(url, headers: resolved), headers);
 
   static Future<http.Response> post(Uri url,
-      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
-    final response =
-        await http.post(url, headers: headers, body: body, encoding: encoding);
-    _checkUnauthorized(response);
-    return response;
-  }
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          (resolved) =>
+              http.post(url, headers: resolved, body: body, encoding: encoding),
+          headers);
 
   static Future<http.Response> put(Uri url,
-      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
-    final response =
-        await http.put(url, headers: headers, body: body, encoding: encoding);
-    _checkUnauthorized(response);
-    return response;
-  }
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          (resolved) =>
+              http.put(url, headers: resolved, body: body, encoding: encoding),
+          headers);
 
   static Future<http.Response> patch(Uri url,
-      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
-    final response =
-        await http.patch(url, headers: headers, body: body, encoding: encoding);
-    _checkUnauthorized(response);
-    return response;
-  }
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          (resolved) => http.patch(url,
+              headers: resolved, body: body, encoding: encoding),
+          headers);
 
   static Future<http.Response> delete(Uri url,
-      {Map<String, String>? headers, Object? body, Encoding? encoding}) async {
-    final response = await http.delete(url,
-        headers: headers, body: body, encoding: encoding);
-    _checkUnauthorized(response);
-    return response;
-  }
+          {Map<String, String>? headers, Object? body, Encoding? encoding}) =>
+      _send(
+          (resolved) => http.delete(url,
+              headers: resolved, body: body, encoding: encoding),
+          headers);
 }

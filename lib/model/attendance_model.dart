@@ -148,9 +148,11 @@ class AttendanceRecord {
     }
   }
 
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool includeLocal = false}) {
     return {
       'studentId': studentId,
+      if (includeLocal) 'studentName': studentName,
+      if (includeLocal && studentPhoto != null) 'studentPhoto': studentPhoto,
       'status': status.toUpperCase(),
       'observation': observation,
     };
@@ -162,6 +164,7 @@ class AttendanceSheet {
   final String classId;
   final DateTime date;
   final DateTime? updatedAt;
+  final int version;
   final List<AttendanceRecord> records;
 
   AttendanceSheet({
@@ -169,6 +172,7 @@ class AttendanceSheet {
     required this.classId,
     required this.date,
     this.updatedAt,
+    this.version = 0,
     required this.records,
   });
 
@@ -196,6 +200,7 @@ class AttendanceSheet {
       classId: _extractId(json['classId']),
       date: _parseAttendanceDay(json['date']),
       updatedAt: _parseDateTime(json['updatedAt']),
+      version: int.tryParse(json['version']?.toString() ?? '') ?? 0,
       records: recordsList,
     );
   }
@@ -218,7 +223,7 @@ class AttendanceSheet {
     }
   }
 
-  Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson({bool includeLocal = false}) {
     final y = date.year.toString().padLeft(4, '0');
     final m = date.month.toString().padLeft(2, '0');
     final d = date.day.toString().padLeft(2, '0');
@@ -227,7 +232,11 @@ class AttendanceSheet {
       if (id != null) '_id': id,
       'classId': classId,
       'date': '$y-$m-$d',
-      'records': records.map((r) => r.toJson()).toList(),
+      'records':
+          records.map((r) => r.toJson(includeLocal: includeLocal)).toList(),
+      if (includeLocal) 'version': version,
+      if (includeLocal && updatedAt != null)
+        'updatedAt': updatedAt!.toUtc().toIso8601String(),
     };
   }
 }

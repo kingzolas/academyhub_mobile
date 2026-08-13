@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:academyhub_mobile/config/api_config.dart';
 import 'package:academyhub_mobile/screens/loginPage.dart';
 import 'package:flutter/material.dart';
@@ -25,6 +26,8 @@ import 'package:academyhub_mobile/providers/report_card_provider.dart';
 import 'package:academyhub_mobile/providers/app_notification_provider.dart';
 import 'package:academyhub_mobile/providers/guardian_official_documents_provider.dart';
 import '../services/navigation_service.dart';
+import '../services/auth_session_manager.dart';
+import '../services/offline_attendance_store.dart';
 
 // [NOVO] Imports para a navegação global forçada
 // import '../screens/auth/login_screen.dart'; // Ajuste este caminho para a sua tela de Login real
@@ -47,6 +50,18 @@ class AuthProvider with ChangeNotifier {
   GuardianSession? _guardianSession;
   String? _sessionPrincipal;
   bool _isExpiringGuardianSession = false;
+  Timer? _refreshTimer;
+
+  AuthProvider() {
+    AuthSessionManager.instance.onAccessTokenChanged = (token) {
+      _token = token;
+      if (token != null) _scheduleRefresh();
+      notifyListeners();
+    };
+    AuthSessionManager.instance.onSessionInvalid = () {
+      unawaited(_clearInvalidStandardSession());
+    };
+  }
 
   User? get user => _user;
   String? get token => _token;
@@ -72,6 +87,9 @@ class AuthProvider with ChangeNotifier {
   }
 
   Future<void> _persistGuardianSession() async {
+    final guardianToken = _token!;
+    await AuthSessionManager.instance.clearTokens();
+    _token = guardianToken;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_authTokenKey, _token!);
     await prefs.setString(
@@ -214,13 +232,18 @@ class AuthProvider with ChangeNotifier {
       }
       debugPrint('----------------------------------------');
 
+      if (context.mounted) clearAppCache(context);
       _user = User.fromJson(rawUser);
       _token = response['token'];
       _guardianSession = null;
       _sessionPrincipal = isStudent ? 'student' : 'staff';
 
       debugPrint('✅ [AuthProvider] Login bem-sucedido! Objeto User criado.');
+      await AuthSessionManager.instance.saveLogin(response);
+      OfflineAttendanceStore.instance
+          .activate(userId: _user!.id, schoolId: _user!.schoolId);
       await _persistStandardSession(rawUser);
+      _scheduleRefresh();
       debugPrint(
           '💾 [AuthProvider] Token e usuário salvos no SharedPreferences.');
 
@@ -276,6 +299,7 @@ class AuthProvider with ChangeNotifier {
           "staffProfiles": [],
         };
 
+        if (context.mounted) clearAppCache(context);
         _user = User.fromJson(rawUser);
         _token = responseData['token'];
         _guardianSession = null;
@@ -283,6 +307,7 @@ class AuthProvider with ChangeNotifier {
 
         debugPrint('✅ [AuthProvider] Magic Link aceito! Objeto User criado.');
 
+        await AuthSessionManager.instance.saveLogin(responseData);
         await _persistStandardSession(rawUser);
 
         if (_user != null && _token != null) {
@@ -310,6 +335,8 @@ class AuthProvider with ChangeNotifier {
   // [AJUSTADO] FUNÇÃO DE LOGOUT COM REDIRECIONAMENTO GLOBAL
   // =================================================================
   Future<void> logout([BuildContext? context]) async {
+    _refreshTimer?.cancel();
+    await AuthSessionManager.instance.logoutRemote();
     // 1. Tenta limpar o cache dos providers usando o context passado ou o global
     final activeContext = context;
 
@@ -325,6 +352,7 @@ class AuthProvider with ChangeNotifier {
     _token = null;
     _guardianSession = null;
     _sessionPrincipal = null;
+    OfflineAttendanceStore.instance.deactivate();
 
     // 3. Remove do armazenamento permanente
     final prefs = await SharedPreferences.getInstance();
@@ -335,6 +363,7 @@ class AuthProvider with ChangeNotifier {
     await prefs.remove(_studentDataKey);
     await prefs.remove(_userRoleKey);
     await prefs.remove(_sessionPrincipalKey);
+    await AuthSessionManager.instance.clearTokens();
 
     debugPrint(
         '🗑️ [AuthProvider] Sessão encerrada e dados removidos do SharedPreferences.');
@@ -419,6 +448,7 @@ class AuthProvider with ChangeNotifier {
   Future<bool> tryAutoLogin(BuildContext context) async {
     debugPrint('--- [AuthProvider] Tentando auto-login... ---');
     final prefs = await SharedPreferences.getInstance();
+    await AuthSessionManager.instance.restore();
 
     if (!prefs.containsKey(_authTokenKey)) {
       debugPrint(
@@ -426,7 +456,8 @@ class AuthProvider with ChangeNotifier {
       return false;
     }
 
-    _token = prefs.getString(_authTokenKey);
+    _token = AuthSessionManager.instance.accessToken ??
+        prefs.getString(_authTokenKey);
     final sessionPrincipal = prefs.getString(_sessionPrincipalKey);
 
     if (sessionPrincipal == 'guardian') {
@@ -474,6 +505,22 @@ class AuthProvider with ChangeNotifier {
         _sessionPrincipal =
             sessionPrincipal ?? (isStudent ? 'student' : 'staff');
 
+        OfflineAttendanceStore.instance.activate(
+          userId: _user!.id,
+          schoolId: _user!.schoolId,
+        );
+
+        if (_sessionPrincipal == 'staff' &&
+            await AuthSessionManager.instance.hasRefreshToken()) {
+          try {
+            _token = await AuthSessionManager.instance.refresh();
+          } on SessionRefreshException catch (error) {
+            if (error.sessionInvalid) return false;
+            // Sem internet: mantem a conta restaurada para os dados offline.
+          }
+        }
+        _scheduleRefresh();
+
         notifyListeners();
         debugPrint(
             '✅ [AuthProvider] Auto-login bem-sucedido. Notificando ouvintes.');
@@ -505,6 +552,39 @@ class AuthProvider with ChangeNotifier {
     }
 
     return false;
+  }
+
+  void _scheduleRefresh() {
+    _refreshTimer?.cancel();
+    if (_sessionPrincipal != 'staff') return;
+    _refreshTimer = Timer(const Duration(minutes: 10), () async {
+      try {
+        _token = await AuthSessionManager.instance.refresh();
+      } on SessionRefreshException catch (error) {
+        if (error.sessionInvalid) return;
+      }
+      _scheduleRefresh();
+    });
+  }
+
+  Future<void> _clearInvalidStandardSession() async {
+    if (_sessionPrincipal != 'staff') return;
+    _refreshTimer?.cancel();
+    _user = null;
+    _token = null;
+    _sessionPrincipal = null;
+    OfflineAttendanceStore.instance.deactivate();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_authTokenKey);
+    await prefs.remove(_userDataKey);
+    await prefs.remove(_sessionPrincipalKey);
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
   }
 
   Future<GuardianFirstAccessStartResult> startGuardianFirstAccess({
