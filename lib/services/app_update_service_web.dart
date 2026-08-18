@@ -111,7 +111,7 @@ class AppUpdateService extends ChangeNotifier {
     notifyListeners();
 
     final timestamp = DateTime.now().microsecondsSinceEpoch;
-    final uri = Uri.base.resolve('version.json?t=$timestamp');
+    final uri = resolveVersionMetadataUri(Uri.base, timestamp);
     _log('[AppUpdate] checking reason=$reason uri=$uri');
 
     try {
@@ -142,6 +142,11 @@ class AppUpdateService extends ChangeNotifier {
       _isChecking = false;
       notifyListeners();
     }
+  }
+
+  @visibleForTesting
+  static Uri resolveVersionMetadataUri(Uri base, int timestamp) {
+    return base.resolve('/version.json?t=$timestamp');
   }
 
   Future<Map<String, dynamic>> _fetchVersion(Uri uri) async {
